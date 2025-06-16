@@ -97,8 +97,10 @@ def simulate_inventory(demand_series, reorder_point, lead_time_days=30, initial_
 
 def forecast_demand(demand_series, periods=6):
     """Simple demand forecasting using linear regression and moving average"""
-    if len(demand_series) < 3:
-        return pd.Series([demand_series.mean()] * periods)
+    if len(demand_series) < 2:
+        # For very limited data, use the available average
+        avg_demand = demand_series.mean() if len(demand_series) > 0 else 0
+        return pd.Series([avg_demand] * periods)
     
     # Linear trend forecast
     x = np.arange(len(demand_series)).reshape(-1, 1)
@@ -111,13 +113,24 @@ def forecast_demand(demand_series, periods=6):
         future_x = np.arange(len(demand_series), len(demand_series) + periods).reshape(-1, 1)
         forecast = model.predict(future_x)
         
-        # Ensure non-negative forecasts
+        # Ensure non-negative forecasts and apply smoothing for limited data
         forecast = np.maximum(forecast, 0)
+        
+        # For limited data, blend with historical average to reduce volatility
+        if len(demand_series) <= 3:
+            historical_avg = demand_series.mean()
+            # Blend 70% forecast, 30% historical average
+            forecast = forecast * 0.7 + historical_avg * 0.3
         
         return pd.Series(forecast)
     except:
-        # Fallback to moving average
-        return pd.Series([demand_series.tail(3).mean()] * periods)
+        # Fallback to moving average or simple average
+        if len(demand_series) >= 2:
+            recent_avg = demand_series.tail(2).mean()
+        else:
+            recent_avg = demand_series.mean()
+        
+        return pd.Series([recent_avg] * periods)
 
 def calculate_abc_classification(df):
     """Calculate ABC classification based on annual value"""
