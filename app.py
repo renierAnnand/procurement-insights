@@ -379,11 +379,18 @@ def show_vendor_analysis(df):
         return
     
     # Vendor performance metrics
-    vendor_metrics = df.groupby('Vendor Name').agg({
+    agg_dict = {
         'Line Total': ['sum', 'mean', 'count'],
-        'Unit Price': 'mean',
-        'Qty Delivered': 'sum' if 'Qty Delivered' in df.columns else 'Qty Ordered': 'sum'
-    }).round(2)
+        'Unit Price': 'mean'
+    }
+    
+    # Add quantity column based on availability
+    if 'Qty Delivered' in df.columns:
+        agg_dict['Qty Delivered'] = 'sum'
+    elif 'Qty Ordered' in df.columns:
+        agg_dict['Qty Ordered'] = 'sum'
+    
+    vendor_metrics = df.groupby('Vendor Name').agg(agg_dict).round(2)
     
     vendor_metrics.columns = ['Total Value', 'Avg Order Value', 'Order Count', 'Avg Unit Price', 'Total Quantity']
     vendor_metrics = vendor_metrics.sort_values('Total Value', ascending=False)
@@ -431,11 +438,18 @@ def show_product_analysis(df):
     if 'Product Family' in df.columns:
         st.subheader("📊 Product Family Analysis")
         
-        family_metrics = df.groupby('Product Family').agg({
+        agg_dict = {
             'Line Total': ['sum', 'mean', 'count'],
-            'Unit Price': 'mean',
-            'Qty Delivered' if 'Qty Delivered' in df.columns else 'Qty Ordered': 'sum'
-        }).round(2)
+            'Unit Price': 'mean'
+        }
+        
+        # Add quantity column based on availability
+        if 'Qty Delivered' in df.columns:
+            agg_dict['Qty Delivered'] = 'sum'
+        elif 'Qty Ordered' in df.columns:
+            agg_dict['Qty Ordered'] = 'sum'
+        
+        family_metrics = df.groupby('Product Family').agg(agg_dict).round(2)
         
         family_metrics.columns = ['Total Value', 'Avg Order Value', 'Order Count', 'Avg Unit Price', 'Total Quantity']
         family_metrics = family_metrics.sort_values('Total Value', ascending=False)
