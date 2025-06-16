@@ -215,49 +215,7 @@ def display(df):
             demand_by_month = item_df.groupby("Month")["Qty Delivered"].sum().fillna(0)
             
             if len(demand_by_month) < 2:
-                st.warning("⚠️ Insufficient historical data for statistical analysis. Need at least 2 months of data.")
-                
-                # Show alternative analysis for limited data
-                st.subheader("🔄 Alternative Analysis for Limited Data")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info("**Available Data Points:**")
-                    st.write(f"• Total orders: {total_orders}")
-                    st.write(f"• Total quantity: {total_qty:,.1f}")
-                    st.write(f"• Average order size: {avg_order_size:.1f}")
-                    
-                    if len(item_df) > 0:
-                        last_order_date = item_df['Creation Date'].max()
-                        st.write(f"• Last order: {last_order_date.strftime('%Y-%m-%d') if pd.notna(last_order_date) else 'N/A'}")
-                
-                with col2:
-                    st.warning("**Recommended Actions:**")
-                    st.write("• **Manual Review**: Set reorder point based on business knowledge")
-                    st.write("• **Industry Benchmarks**: Use similar item patterns")
-                    st.write("• **Conservative Approach**: Use 2-3x average order size")
-                    st.write("• **Monitor Closely**: Review monthly until more data available")
-                
-                # Simple recommendation based on available data
-                if total_qty > 0:
-                    simple_reorder = avg_order_size * 2  # Conservative 2x approach
-                    st.subheader("📋 Simple Recommendation")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Conservative ROP", f"{simple_reorder:.1f}", help="2x average order size")
-                    with col2:
-                        st.metric("Aggressive ROP", f"{avg_order_size * 1.5:.1f}", help="1.5x average order size")
-                    with col3:
-                        st.metric("Safety Stock", f"{avg_order_size * 0.5:.1f}", help="0.5x average order size")
-                
-                # Show order history if available
-                if len(item_df) > 0:
-                    st.subheader("📊 Order History")
-                    history_display = item_df[['Creation Date', 'Qty Delivered', 'Vendor Name', 'Unit Price']].copy()
-                    history_display['Creation Date'] = history_display['Creation Date'].dt.strftime('%Y-%m-%d')
-                    history_display = history_display.sort_values('Creation Date', ascending=False)
-                    st.dataframe(history_display, use_container_width=True)
-                
+                st.warning("Insufficient data for analysis. Need at least 2 months of data.")
                 return
             
             # Configuration
@@ -390,93 +348,254 @@ def display(df):
     with tab2:
         st.subheader("📊 Demand Forecasting Dashboard")
         
-        # Multi-item selection
-        selected_items = st.multiselect(
-            "Select Items for Forecasting",
-            options=sorted(df_clean["Item"].dropna().unique()),
-            max_selections=10,
-            key="forecast_items"
+        # Show data summary first
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Items", df_clean['Item'].nunique())
+        with col2:
+            date_range = df_clean['Creation Date'].max() - df_clean['Creation Date'].min()
+            st.metric("Data Range (Days)", f"{date_range.days}")
+        with col3:
+            months_of_data = len(df_clean.groupby(df_clean['Creation Date'].dt.to_period('M')))
+            st.metric("Months of Data", months_of_data)
+        
+        # Auto-analyze top items by volume
+        st.subheader("🎯 Top Items Analysis")
+        
+        # Get top items by total quantity
+        top_items_by_qty = df_clean.groupby('Item')['Qty Delivered'].sum().nlargest(20)
+        
+        # Analyze data availability for top items
+        item_analysis = []
+        for item in top_items_by_qty.index:
+            item_df = df_clean[df_clean["Item"] == item].copy()
+            item_df['Month'] = item_df['Creation Date'].dt.to_period("M")
+            demand_by_month = item_df.groupby("Month")["Qty Delivered"].sum().fillna(0)
+            
+            item_desc = item_df['Item Description'].iloc[0] if 'Item Description' in item_df.columns else "N/A"
+            
+            item_analysis.append({
+                'Item': item,
+                'Item Description': item_desc,
+                'Total Qty': top_items_by_qty[item],
+                'Months of Data': len(demand_by_month),
+                'Avg Monthly Demand': demand_by_month.mean(),
+                'Can Forecast': len(demand_by_month) >= 2  # Lowered threshold
+            })
+        
+        analysis_df = pd.DataFrame(item_analysis)
+        
+        # Show analysis results
+        st.dataframe(
+            analysis_df.style.format({
+                'Total Qty': '{:,.1f}',
+                'Avg Monthly Demand': '{:.1f}'
+            }),
+            use_container_width=True
         )
         
-        if selected_items:
-            forecast_results = {}
+        # Multi-item selection from analyzable items
+        forecastable_items = analysis_df[analysis_df['Can Forecast']]['Item'].tolist()
+        
+        if len(forecastable_items) > 0:
+            st.subheader("📈 Demand Forecasting")
             
-            for item in selected_items:
-                item_df = df_clean[df_clean["Item"] == item].copy()
-                item_df['Month'] = item_df['Creation Date'].dt.to_period("M")
-                demand_by_month = item_df.groupby("Month")["Qty Delivered"].sum().fillna(0)
+            # Auto-select top 5 items or let user choose
+            col1, col2 = st.columns(2)
+            with col1:
+                auto_select = st.checkbox("Auto-select top 5 items", value=True)
+            with col2:
+                forecast_periods = st.number_input("Forecast Periods", min_value=1, max_value=12, value=3)
+            
+            if auto_select:
+                selected_items = forecastable_items[:5]
+                st.info(f"Auto-selected top 5 items: {selected_items}")
+            else:
+                selected_items = st.multiselect(
+                    "Select Items for Forecasting",
+                    options=forecastable_items,
+                    default=forecastable_items[:3] if len(forecastable_items) >= 3 else forecastable_items,
+                    max_selections=10,
+                    key="forecast_items"
+                )
+            
+            if selected_items:
+                forecast_results = {}
                 
-                if len(demand_by_month) >= 3:
-                    forecast = forecast_demand(demand_by_month, 6)
+                # Process each selected item
+                for item in selected_items:
+                    item_df = df_clean[df_clean["Item"] == item].copy()
+                    item_df['Month'] = item_df['Creation Date'].dt.to_period("M")
+                    demand_by_month = item_df.groupby("Month")["Qty Delivered"].sum().fillna(0)
+                    
+                    # Generate forecast
+                    forecast = forecast_demand(demand_by_month, forecast_periods)
                     forecast_results[item] = {
                         'historical': demand_by_month,
                         'forecast': forecast,
-                        'total_forecast': forecast.sum()
+                        'total_forecast': forecast.sum(),
+                        'item_desc': item_df['Item Description'].iloc[0] if 'Item Description' in item_df.columns else f"Item {item}"
                     }
-            
-            if forecast_results:
-                # Summary table
-                summary_data = []
-                for item, result in forecast_results.items():
-                    summary_data.append({
-                        'Item': item,
-                        'Historical Avg': result['historical'].mean(),
-                        '6-Month Forecast': result['total_forecast'],
-                        'Monthly Avg Forecast': result['forecast'].mean(),
-                        'Growth Trend': 'Increasing' if result['forecast'].iloc[-1] > result['historical'].mean() else 'Stable/Decreasing'
-                    })
                 
-                summary_df = pd.DataFrame(summary_data)
-                
-                st.write("**Forecast Summary:**")
-                st.dataframe(
-                    summary_df.style.format({
-                        'Historical Avg': '{:.1f}',
-                        '6-Month Forecast': '{:.1f}',
-                        'Monthly Avg Forecast': '{:.1f}'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Forecast visualization
-                fig = go.Figure()
-                
-                for item, result in forecast_results.items():
-                    # Historical
-                    fig.add_trace(go.Scatter(
-                        x=[str(p) for p in result['historical'].index],
-                        y=result['historical'].values,
-                        mode='lines+markers',
-                        name=f'Item {item} (Historical)',
-                        line=dict(width=2)
-                    ))
+                if forecast_results:
+                    # Summary table
+                    summary_data = []
+                    for item, result in forecast_results.items():
+                        historical_trend = 'Increasing' if len(result['historical']) > 1 and result['historical'].iloc[-1] > result['historical'].iloc[0] else 'Stable/Decreasing'
+                        
+                        summary_data.append({
+                            'Item': item,
+                            'Description': result['item_desc'][:50] + "..." if len(result['item_desc']) > 50 else result['item_desc'],
+                            'Historical Avg': result['historical'].mean(),
+                            f'{forecast_periods}-Period Forecast': result['total_forecast'],
+                            'Monthly Avg Forecast': result['forecast'].mean(),
+                            'Historical Trend': historical_trend,
+                            'Data Points': len(result['historical'])
+                        })
                     
-                    # Forecast
-                    future_periods = pd.period_range(
-                        start=result['historical'].index[-1] + 1,
-                        periods=6,
-                        freq='M'
+                    summary_df = pd.DataFrame(summary_data)
+                    
+                    st.write("**Forecast Summary:**")
+                    st.dataframe(
+                        summary_df.style.format({
+                            'Historical Avg': '{:.1f}',
+                            f'{forecast_periods}-Period Forecast': '{:.1f}',
+                            'Monthly Avg Forecast': '{:.1f}'
+                        }),
+                        use_container_width=True
                     )
                     
-                    fig.add_trace(go.Scatter(
-                        x=[str(p) for p in future_periods],
-                        y=result['forecast'].values,
-                        mode='lines+markers',
-                        name=f'Item {item} (Forecast)',
-                        line=dict(width=2, dash='dash')
-                    ))
+                    # Forecast visualization
+                    fig = go.Figure()
+                    
+                    colors = px.colors.qualitative.Set1
+                    
+                    for i, (item, result) in enumerate(forecast_results.items()):
+                        color = colors[i % len(colors)]
+                        
+                        # Historical data
+                        fig.add_trace(go.Scatter(
+                            x=[str(p) for p in result['historical'].index],
+                            y=result['historical'].values,
+                            mode='lines+markers',
+                            name=f'Item {item} (Historical)',
+                            line=dict(width=3, color=color),
+                            marker=dict(size=8)
+                        ))
+                        
+                        # Forecast data
+                        future_periods = pd.period_range(
+                            start=result['historical'].index[-1] + 1,
+                            periods=forecast_periods,
+                            freq='M'
+                        )
+                        
+                        fig.add_trace(go.Scatter(
+                            x=[str(p) for p in future_periods],
+                            y=result['forecast'].values,
+                            mode='lines+markers',
+                            name=f'Item {item} (Forecast)',
+                            line=dict(width=3, color=color, dash='dash'),
+                            marker=dict(size=8, symbol='diamond')
+                        ))
+                    
+                    fig.update_layout(
+                        title=f"Demand Forecast for Top {len(selected_items)} Items",
+                        xaxis_title="Month",
+                        yaxis_title="Quantity Delivered",
+                        height=600,
+                        hovermode='x unified',
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Additional insights
+                    st.subheader("🔍 Forecast Insights")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Items with increasing demand
+                        increasing_items = [item for item, result in forecast_results.items() 
+                                          if result['forecast'].mean() > result['historical'].mean()]
+                        
+                        if increasing_items:
+                            st.write("**📈 Items with Increasing Demand:**")
+                            for item in increasing_items:
+                                historical_avg = forecast_results[item]['historical'].mean()
+                                forecast_avg = forecast_results[item]['forecast'].mean()
+                                increase_pct = ((forecast_avg - historical_avg) / historical_avg * 100) if historical_avg > 0 else 0
+                                st.write(f"• Item {item}: +{increase_pct:.1f}% increase expected")
+                        else:
+                            st.write("**📉 No items showing significant demand increase**")
+                    
+                    with col2:
+                        # Volatility analysis
+                        volatile_items = []
+                        for item, result in forecast_results.items():
+                            if len(result['historical']) > 1:
+                                cv = result['historical'].std() / result['historical'].mean() if result['historical'].mean() > 0 else 0
+                                if cv > 0.5:  # High volatility
+                                    volatile_items.append((item, cv))
+                        
+                        if volatile_items:
+                            st.write("**⚠️ High Volatility Items (CV > 50%):**")
+                            for item, cv in sorted(volatile_items, key=lambda x: x[1], reverse=True):
+                                st.write(f"• Item {item}: {cv:.1%} volatility")
+                        else:
+                            st.write("**✅ All items show stable demand patterns**")
+                    
+                    # Export forecast data
+                    if st.button("📥 Export Forecast Data"):
+                        export_data = []
+                        for item, result in forecast_results.items():
+                            # Historical data
+                            for period, qty in result['historical'].items():
+                                export_data.append({
+                                    'Item': item,
+                                    'Period': str(period),
+                                    'Type': 'Historical',
+                                    'Quantity': qty
+                                })
+                            
+                            # Forecast data
+                            future_periods = pd.period_range(
+                                start=result['historical'].index[-1] + 1,
+                                periods=forecast_periods,
+                                freq='M'
+                            )
+                            for period, qty in zip(future_periods, result['forecast']):
+                                export_data.append({
+                                    'Item': item,
+                                    'Period': str(period),
+                                    'Type': 'Forecast',
+                                    'Quantity': qty
+                                })
+                        
+                        export_df = pd.DataFrame(export_data)
+                        csv = export_df.to_csv(index=False)
+                        
+                        st.download_button(
+                            label="Download Forecast Data",
+                            data=csv,
+                            file_name=f"demand_forecast_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
                 
-                fig.update_layout(
-                    title="Multi-Item Demand Forecast",
-                    xaxis_title="Month",
-                    yaxis_title="Quantity",
-                    height=600,
-                    hovermode='x unified'
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No items could be processed for forecasting.")
+            else:
+                st.info("Select items to generate demand forecasts.")
         else:
-            st.info("Select items to see demand forecasting analysis.")
+            st.warning("No items have sufficient data for forecasting. Items need at least 2 months of historical data.")
     
     with tab3:
         st.subheader("🔄 Bulk Reorder Point Analysis")
@@ -527,30 +646,6 @@ def display(df):
                         })
                 
                 progress_bar.empty()
-                
-                # Also track items with insufficient data
-                insufficient_data_items = []
-                for item in items:
-                    item_df = df_clean[df_clean["Item"] == item].copy()
-                    item_df['Month'] = item_df['Creation Date'].dt.to_period("M")
-                    demand_by_month = item_df.groupby("Month")["Qty Delivered"].sum().fillna(0)
-                    
-                    if len(demand_by_month) < min_data_points:
-                        item_desc = item_df['Item Description'].iloc[0] if 'Item Description' in item_df.columns else "N/A"
-                        total_qty = item_df['Qty Delivered'].sum()
-                        order_count = len(item_df)
-                        avg_order_size = total_qty / order_count if order_count > 0 else 0
-                        
-                        insufficient_data_items.append({
-                            'Item': item,
-                            'Item Description': item_desc,
-                            'Total Orders': order_count,
-                            'Total Qty': total_qty,
-                            'Avg Order Size': avg_order_size,
-                            'Conservative ROP': avg_order_size * 2,
-                            'Data Points': len(demand_by_month),
-                            'Status': 'Insufficient Data'
-                        })
                 
                 if bulk_results:
                     bulk_df = pd.DataFrame(bulk_results)
@@ -614,47 +709,6 @@ def display(df):
                     
                     # Store in session state for other tabs
                     st.session_state['bulk_results'] = bulk_df
-                    
-                    # Display insufficient data items
-                    if insufficient_data_items:
-                        st.subheader("⚠️ Items with Insufficient Data")
-                        st.write(f"Found {len(insufficient_data_items)} items with less than {min_data_points} months of data:")
-                        
-                        insufficient_df = pd.DataFrame(insufficient_data_items)
-                        
-                        # Show summary
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Items Needing Review", len(insufficient_df))
-                        with col2:
-                            total_orders_insufficient = insufficient_df['Total Orders'].sum()
-                            st.metric("Total Orders", total_orders_insufficient)
-                        with col3:
-                            avg_conservative_rop = insufficient_df['Conservative ROP'].mean()
-                            st.metric("Avg Conservative ROP", f"{avg_conservative_rop:.1f}")
-                        
-                        # Display the items
-                        st.dataframe(
-                            insufficient_df.style.format({
-                                'Total Qty': '{:.1f}',
-                                'Avg Order Size': '{:.1f}',
-                                'Conservative ROP': '{:.1f}'
-                            }),
-                            use_container_width=True
-                        )
-                        
-                        # Export option for insufficient data items
-                        csv_insufficient = insufficient_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Export Items Needing Manual Review",
-                            data=csv_insufficient,
-                            file_name=f"insufficient_data_items_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv",
-                            key="export_insufficient"
-                        )
-                        
-                        # Store insufficient data items in session state
-                        st.session_state['insufficient_data_items'] = insufficient_df
                 
                 else:
                     st.warning("No items met the minimum data requirements for analysis.")
@@ -747,59 +801,6 @@ def display(df):
                 )
             else:
                 st.success("No high volatility items identified.")
-            
-            # Handle items with insufficient data
-            if 'insufficient_data_items' in st.session_state:
-                insufficient_df = st.session_state['insufficient_data_items']
-                
-                st.subheader("🔧 Items Requiring Manual Review")
-                st.write(f"**{len(insufficient_df)} items** need manual reorder point setting due to insufficient historical data.")
-                
-                # Categorize by order frequency
-                high_frequency = insufficient_df[insufficient_df['Total Orders'] >= 5]
-                medium_frequency = insufficient_df[(insufficient_df['Total Orders'] >= 2) & (insufficient_df['Total Orders'] < 5)]
-                low_frequency = insufficient_df[insufficient_df['Total Orders'] < 2]
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.markdown("#### 🔴 High Frequency Items")
-                    st.write(f"**{len(high_frequency)} items** (5+ orders)")
-                    st.write("**Strategy:**")
-                    st.write("• Use conservative ROP (2x avg)")
-                    st.write("• Monitor weekly")
-                    st.write("• Collect more data quickly")
-                    
-                    if len(high_frequency) > 0:
-                        st.write("**Top Items:**")
-                        top_high = high_frequency.nlargest(5, 'Total Orders')[['Item', 'Total Orders', 'Conservative ROP']]
-                        st.dataframe(top_high, use_container_width=True)
-                
-                with col2:
-                    st.markdown("#### 🟡 Medium Frequency Items")
-                    st.write(f"**{len(medium_frequency)} items** (2-4 orders)")
-                    st.write("**Strategy:**")
-                    st.write("• Use aggressive ROP (1.5x avg)")
-                    st.write("• Monitor monthly")
-                    st.write("• Consider demand planning")
-                    
-                    if len(medium_frequency) > 0:
-                        st.write("**Sample Items:**")
-                        sample_medium = medium_frequency.head(5)[['Item', 'Total Orders', 'Conservative ROP']]
-                        st.dataframe(sample_medium, use_container_width=True)
-                
-                with col3:
-                    st.markdown("#### 🟢 Low Frequency Items")
-                    st.write(f"**{len(low_frequency)} items** (<2 orders)")
-                    st.write("**Strategy:**")
-                    st.write("• Minimal safety stock")
-                    st.write("• Monitor quarterly")
-                    st.write("• Consider discontinuation")
-                    
-                    if len(low_frequency) > 0:
-                        st.write("**Sample Items:**")
-                        sample_low = low_frequency.head(5)[['Item', 'Total Orders', 'Conservative ROP']]
-                        st.dataframe(sample_low, use_container_width=True)
         
         else:
             st.info("Run bulk analysis first to see ABC analysis.")
