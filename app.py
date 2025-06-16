@@ -29,4 +29,11 @@ page = st.sidebar.radio("Choose an analysis module:", [
 ])
 
 # Route to appropriate module
-if page == "Smart Reorder Point Predicti
+if page == "Smart Reorder Point Prediction":
+    reorder_prediction.display(df)
+
+elif page == "Cross-Region Vendor Optimization":
+    cross_region.display(df)
+
+elif page == "Duplicate Vendor/Item Detection":
+    duplicates.display(df)
