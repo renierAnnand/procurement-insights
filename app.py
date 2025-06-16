@@ -108,6 +108,57 @@ def show_overview_dashboard(df):
         avg_lead_time = df['lead_time_days'].mean() if 'lead_time_days' in df.columns else 0
         st.metric("Avg Lead Time", f"{avg_lead_time:.1f} days")
     
+    # Data Quality Overview
+    st.subheader("📊 Data Quality Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    # Check data quality for reorder analysis
+    df_clean = df.dropna(subset=['Item', 'Qty Delivered']) if all(col in df.columns for col in ['Item', 'Qty Delivered']) else pd.DataFrame()
+    
+    if not df_clean.empty and 'Creation Date' in df_clean.columns:
+        df_clean['Creation Date'] = pd.to_datetime(df_clean['Creation Date'], errors='coerce')
+        df_clean['Month'] = df_clean['Creation Date'].dt.to_period("M")
+        
+        # Count items with sufficient data for analysis
+        items_with_data = []
+        for item in df_clean['Item'].unique():
+            item_data = df_clean[df_clean['Item'] == item]
+            monthly_data = item_data.groupby("Month")["Qty Delivered"].sum()
+            if len(monthly_data) >= 2:
+                items_with_data.append(item)
+        
+        analyzable_items = len(items_with_data)
+        total_items = df['Item'].nunique()
+        analyzable_pct = (analyzable_items / total_items * 100) if total_items > 0 else 0
+        
+        with col1:
+            st.metric("Analyzable Items", f"{analyzable_items}/{total_items}", f"{analyzable_pct:.1f}%")
+    
+    with col2:
+        completeness = df.notna().mean().mean() * 100
+        st.metric("Data Completeness", f"{completeness:.1f}%")
+    
+    with col3:
+        recent_data_pct = 0
+        if 'Creation Date' in df.columns:
+            df_temp = df.copy()
+            df_temp['Creation Date'] = pd.to_datetime(df_temp['Creation Date'], errors='coerce')
+            recent_cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
+            recent_data = df_temp[df_temp['Creation Date'] >= recent_cutoff]
+            recent_data_pct = (len(recent_data) / len(df) * 100) if len(df) > 0 else 0
+        st.metric("Recent Data (90d)", f"{recent_data_pct:.1f}%")
+    
+    with col4:
+        duplicate_potential = 0
+        if 'Vendor Name' in df.columns:
+            vendors = df['Vendor Name'].dropna().astype(str)
+            # Simple check for potential duplicates (similar names)
+            unique_vendors = vendors.nunique()
+            # Rough estimate based on naming patterns
+            potential_duplicates = len([v for v in vendors.unique() if any(other != v and v.lower() in other.lower() for other in vendors.unique())])
+            duplicate_potential = (potential_duplicates / unique_vendors * 100) if unique_vendors > 0 else 0
+        st.metric("Potential Duplicates", f"{duplicate_potential:.1f}%")
+    
     # Charts Row
     col1, col2 = st.columns(2)
     
