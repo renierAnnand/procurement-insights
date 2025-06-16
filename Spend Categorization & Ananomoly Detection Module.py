@@ -1043,15 +1043,19 @@ def display(df):
             }
             
             # Create comprehensive export
-            with pd.ExcelWriter('procurement_analysis.xlsx') as writer:
+            import io
+            output = io.BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 for sheet_name, data in export_data.items():
                     if not data.empty:
                         data.to_excel(writer, sheet_name=sheet_name, index=False)
             
-            st.success("Analysis exported successfully!")
+            output.seek(0)
+            
             st.download_button(
                 label="Download Complete Analysis",
-                data=open('procurement_analysis.xlsx', 'rb').read(),
+                data=output.getvalue(),
                 file_name=f"procurement_analysis_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
