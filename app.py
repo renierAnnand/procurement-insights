@@ -254,6 +254,24 @@ def load_and_clean_data(csv_file):
                 df[standard_name] = df[possible_name]
                 break
     
+    # Handle mixed item types (alphanumeric codes vs numeric IDs)
+    if 'Item' in df.columns:
+        # Create both numeric and text versions for compatibility
+        df['Item_Original'] = df['Item'].astype(str)  # Keep original as text
+        
+        # Try to create numeric Item IDs for modules that need them
+        unique_items = df['Item'].astype(str).unique()
+        item_mapping = {item: idx + 1 for idx, item in enumerate(unique_items)}
+        df['Item_Numeric'] = df['Item'].astype(str).map(item_mapping)
+        
+        # Use numeric version as default Item for compatibility
+        df['Item'] = df['Item_Numeric']
+        
+        # Store mapping for reference
+        if 'item_mapping' not in st.session_state:
+            st.session_state['item_mapping'] = item_mapping
+            st.session_state['reverse_item_mapping'] = {v: k for k, v in item_mapping.items()}
+    
     # Find currency column
     currency_column = None
     for col in df.columns:
@@ -460,6 +478,18 @@ def enhanced_contract_analysis(df):
     
     st.info("🔧 **Built-in Contract Analysis** - Enhanced fallback analysis")
     
+    # Show item mapping info if available
+    if 'item_mapping' in st.session_state:
+        with st.expander("🔍 Item Code Mapping"):
+            st.write("**Item codes have been converted to numeric IDs for compatibility:**")
+            mapping_df = pd.DataFrame([
+                {'Original Code': k, 'Numeric ID': v} 
+                for k, v in list(st.session_state['item_mapping'].items())[:10]
+            ])
+            st.dataframe(mapping_df)
+            if len(st.session_state['item_mapping']) > 10:
+                st.write(f"... and {len(st.session_state['item_mapping']) - 10} more items")
+    
     # Basic contract opportunity analysis
     tabs = st.tabs(["📊 Spend Analysis", "🎯 Top Opportunities", "💰 Savings Potential", "📋 Recommendations"])
     
@@ -543,6 +573,15 @@ def enhanced_contract_analysis(df):
                 unique_items = vendor_data['Item'].nunique() if 'Item' in df.columns else 1
                 avg_order_value = vendor_data['Line Total'].mean()
                 
+                # Get sample of actual item codes for display
+                if 'Item_Original' in df.columns:
+                    sample_items = vendor_data['Item_Original'].unique()[:3]
+                    items_display = ', '.join([str(item) for item in sample_items])
+                    if len(vendor_data['Item_Original'].unique()) > 3:
+                        items_display += f" (+{len(vendor_data['Item_Original'].unique()) - 3} more)"
+                else:
+                    items_display = f"{unique_items} items"
+                
                 # Calculate opportunity score
                 spend_score = min(total_spend / min_annual_spend, 1.0) if min_annual_spend > 0 else 1.0
                 frequency_score = min(order_count / min_orders, 1.0) if min_orders > 0 else 1.0
@@ -556,7 +595,7 @@ def enhanced_contract_analysis(df):
                         'Vendor': vendor,
                         'Total Spend': total_spend,
                         'Order Count': order_count,
-                        'Unique Items': unique_items,
+                        'Items': items_display,
                         'Avg Order Value': avg_order_value,
                         'Opportunity Score': opportunity_score,
                         'Priority': 'High' if opportunity_score >= 0.7 else 'Medium' if opportunity_score >= 0.4 else 'Low'
