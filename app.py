@@ -111,10 +111,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 class CurrencyConverter:
-    """Advanced currency converter for procurement analytics"""
+    """Advanced currency converter for procurement analytics - converts all currencies to Saudi Riyals (SAR)"""
     
     def __init__(self):
-        self.base_currency = 'SAR'
+        self.base_currency = 'SAR'  # All conversions are to Saudi Riyals
+        # Exchange rates: 1 unit of foreign currency = X Saudi Riyals
         self.exchange_rates = {
             'USD': 3.75, 'EUR': 4.10, 'GBP': 4.75, 'SAR': 1.00, 'AED': 1.02,
             'QAR': 1.03, 'KWD': 12.25, 'BHD': 9.95, 'OMR': 9.75, 'JPY': 0.025,
@@ -191,20 +192,21 @@ class CurrencyConverter:
             return 0
     
     def convert_to_sar(self, amount, currency):
-        """Convert amount to SAR"""
+        """Convert amount from any currency to Saudi Riyals (SAR)"""
         if pd.isna(amount) or amount == 0:
             return 0
         
         if pd.isna(currency):
-            return float(amount)
+            return float(amount)  # Assume already in SAR if no currency specified
         
         currency = str(currency).upper().strip()
         
         if currency == 'SAR':
-            return float(amount)
+            return float(amount)  # Already in SAR
         
         rate = self.exchange_rates.get(currency, 1.0)
-        return float(amount) * rate
+        converted_amount = float(amount) * rate
+        return converted_amount
 
 # Built-in data loading and cleaning functions (replacing utils.py)
 def load_and_clean_data(csv_file):
@@ -280,7 +282,7 @@ def load_and_clean_data(csv_file):
             currency_column = col
             break
     
-    # Process currency conversion for price columns
+    # Process currency conversion for price columns - convert everything to SAR
     price_columns = ['Unit Price', 'Line Total', 'Total', 'Amount', 'Cost', 'Value']
     
     for price_col in price_columns:
@@ -303,7 +305,7 @@ def load_and_clean_data(csv_file):
                 else:
                     amount = price_value if not pd.isna(price_value) else 0
                 
-                # Convert to SAR
+                # Convert to SAR (Saudi Riyals)
                 converted_amount = converter.convert_to_sar(amount, currency)
                 converted_values.append(converted_amount)
                 
@@ -312,7 +314,7 @@ def load_and_clean_data(csv_file):
                     conversion_count += 1
                     currencies_found.add(currency)
             
-            # Update the column with converted values
+            # Update the column with converted values (now all in SAR)
             df[price_col] = converted_values
     
     # Calculate Line Total if missing
@@ -477,6 +479,7 @@ def enhanced_contract_analysis(df):
         return
     
     st.info("🔧 **Built-in Contract Analysis** - Enhanced fallback analysis")
+    st.info("🏛️ **All monetary values shown in Saudi Riyals (SAR)** after automatic currency conversion")
     
     # Show item mapping info if available
     if 'item_mapping' in st.session_state:
@@ -519,6 +522,8 @@ def enhanced_contract_analysis(df):
                     title="Top 10 Vendors by Total Spend (SAR)"
                 )
                 fig.update_layout(height=400)
+                fig.update_xaxes(title="Total Spend (SAR)")
+                fig.update_yaxes(title="Vendor Name")
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
@@ -716,6 +721,8 @@ def enhanced_contract_analysis(df):
                 title="Top 10 Savings Opportunities (SAR)"
             )
             fig.update_layout(height=500)
+            fig.update_xaxes(title="Total Savings (SAR)")
+            fig.update_yaxes(title="Vendor Name")
             st.plotly_chart(fig, use_container_width=True)
         
         else:
@@ -804,19 +811,19 @@ def generate_sample_data(num_records=1000):
     for i in range(num_records):
         currency = np.random.choice(currencies, p=currency_weights)
         
-        # Different price ranges by currency
+        # Different price ranges by currency - but will be converted to SAR
         if currency == 'USD':
-            price = np.random.uniform(10, 500)
+            price = np.random.uniform(10, 500)  # $10-500 → SAR 37.5-1875
         elif currency == 'EUR':
-            price = np.random.uniform(8, 450)
+            price = np.random.uniform(8, 450)   # €8-450 → SAR 33-1845
         elif currency == 'SAR':
-            price = np.random.uniform(40, 1800)
+            price = np.random.uniform(40, 1800) # Already in SAR
         elif currency == 'AED':
-            price = np.random.uniform(35, 1700)
+            price = np.random.uniform(35, 1700) # AED 35-1700 → SAR 36-1734
         elif currency == 'INR':
-            price = np.random.uniform(800, 40000)
+            price = np.random.uniform(800, 40000) # INR 800-40K → SAR 36-1800
         else:
-            price = np.random.uniform(20, 1000)
+            price = np.random.uniform(20, 1000)  # Other currencies → various SAR amounts
         
         creation_date = datetime.now() - timedelta(days=np.random.randint(0, 730))
         qty_ordered = np.random.randint(1, 100)
@@ -913,7 +920,7 @@ def display_key_metrics(df):
     with col2:
         if 'Line Total' in df.columns:
             total_value = df['Line Total'].sum()
-            st.metric("💰 Total Value (SAR)", f"{total_value:,.0f}")
+            st.metric("💰 Total Value", f"{total_value:,.0f} SAR")
         else:
             st.metric("💰 Total Value", "N/A")
     
@@ -924,7 +931,7 @@ def display_key_metrics(df):
     with col4:
         if 'Unit Price' in df.columns:
             avg_unit_price = df['Unit Price'].mean()
-            st.metric("💵 Avg Unit Price (SAR)", f"{avg_unit_price:.2f}")
+            st.metric("💵 Avg Unit Price", f"{avg_unit_price:.2f} SAR")
         else:
             st.metric("💵 Avg Unit Price", "N/A")
     
@@ -945,10 +952,10 @@ def show_overview_dashboard(df):
     
     # Currency conversion summary if available
     if 'currency_conversions' in st.session_state and st.session_state['currency_conversions'] > 0:
-        st.info(f"💱 **Multi-Currency Data Processed:** {st.session_state['currency_conversions']} values converted to SAR")
+        st.info(f"💱 **Multi-Currency Data Converted to SAR:** {st.session_state['currency_conversions']} values converted from various currencies to Saudi Riyals (SAR)")
         
         if 'currencies_found' in st.session_state and st.session_state['currencies_found']:
-            st.write(f"**Currencies Detected:** {', '.join(st.session_state['currencies_found'])}")
+            st.write(f"**Original Currencies Detected:** {', '.join(st.session_state['currencies_found'])} → **All converted to SAR**")
     
     # Key metrics
     display_key_metrics(df)
@@ -1015,7 +1022,7 @@ def show_demand_forecasting(df):
     
     # Currency conversion info
     if 'currency_conversions' in st.session_state and st.session_state['currency_conversions'] > 0:
-        st.success(f"💱 **Currency Conversion Applied:** {st.session_state['currency_conversions']} values converted to SAR for accurate forecasting")
+        st.success(f"💱 **Currency Conversion Applied:** {st.session_state['currency_conversions']} values converted to SAR for accurate forecasting in Saudi Riyals")
     
     # Forecasting parameters
     col1, col2, col3 = st.columns(3)
@@ -1211,6 +1218,7 @@ def main():
     # App title and description
     st.markdown('<div class="main-header">📊 Complete Procurement Analytics Platform</div>', unsafe_allow_html=True)
     st.markdown("**Advanced procurement analytics with AI-powered insights, multi-currency support, and demand forecasting**")
+    st.markdown("🏛️ **All monetary values displayed in Saudi Riyals (SAR)** | Multi-currency data automatically converted")
     
     # Quick status check
     total_modules = 7
@@ -1233,15 +1241,16 @@ def main():
     
     # Currency conversion settings
     st.sidebar.subheader("💱 Currency Settings")
-    enable_currency = st.sidebar.checkbox("Enable Multi-Currency Conversion", value=True)
+    enable_currency = st.sidebar.checkbox("Enable Multi-Currency Conversion to SAR", value=True)
     
     if enable_currency:
-        show_rates = st.sidebar.checkbox("Show Exchange Rates")
+        st.sidebar.info("🏛️ All currencies automatically converted to Saudi Riyals (SAR)")
+        show_rates = st.sidebar.checkbox("Show Exchange Rates to SAR")
         if show_rates:
             converter = CurrencyConverter()
             st.sidebar.write("**Exchange Rates to SAR:**")
             for curr, rate in list(converter.exchange_rates.items())[:8]:
-                st.sidebar.text(f"{curr}: {rate}")
+                st.sidebar.text(f"1 {curr} = {rate} SAR")
     
     # File upload
     st.sidebar.subheader("📁 Data Source")
@@ -1265,10 +1274,13 @@ def main():
                 if 'currency_conversions' in st.session_state:
                     conv = st.session_state['currency_conversions']
                     if conv > 0:
-                        st.write(f"💱 **Currency conversions:** {conv}")
+                        st.write(f"💱 **Currency conversions to SAR:** {conv}")
                         if 'currencies_found' in st.session_state:
                             currencies = st.session_state['currencies_found']
-                            st.write(f"💰 **Currencies:** {', '.join(currencies)}")
+                            st.write(f"💰 **Original currencies:** {', '.join(currencies)}")
+                            st.write(f"🏛️ **All values now in:** Saudi Riyals (SAR)")
+                    else:
+                        st.write("🏛️ **Currency:** Saudi Riyals (SAR)")
                     
         except Exception as e:
             st.sidebar.error(f"❌ Error loading file: {str(e)}")
@@ -1322,6 +1334,8 @@ def main():
         conversions = st.session_state['currency_conversions']
         if conversions > 0:
             st.sidebar.success(f"💱 {conversions} values converted to SAR")
+        else:
+            st.sidebar.info("🏛️ All values in Saudi Riyals (SAR)")
     
     # Data quality check
     if st.sidebar.checkbox("📋 Show Data Quality"):
@@ -1363,6 +1377,7 @@ def main():
     
     with col1:
         st.markdown("*🚀 Complete Procurement Analytics Platform - Built with Advanced AI & Multi-Currency Support*")
+        st.markdown("*🏛️ All monetary values displayed in Saudi Riyals (SAR)*")
     
     with col2:
         if st.button("💡 Installation Help"):
