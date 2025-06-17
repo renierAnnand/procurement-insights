@@ -8,10 +8,14 @@ import os
 import re
 from datetime import datetime, timedelta
 import warnings
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+# Optional imports for advanced analytics
+try:
+    from sklearn.ensemble import IsolationForest
+    from sklearn.preprocessing import StandardScaler
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
 from math import sqrt
-import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
 
 # Import all your existing modules
@@ -653,27 +657,44 @@ def show_demand_forecasting(df):
                             change_pct = ((avg_forecast - avg_historical) / avg_historical) * 100
                             st.metric("📊 Change vs Historical", f"{change_pct:+.1f}%")
                     
-                    # Enhanced plotting
-                    fig, ax = plt.subplots(figsize=(12, 6))
+                    # Enhanced plotting with Plotly
+                    fig = go.Figure()
                     
-                    # Plot historical data
-                    historical_ts.plot(label="Historical Demand", ax=ax, color='#1f77b4', linewidth=2)
+                    # Add historical data
+                    fig.add_trace(go.Scatter(
+                        x=historical_ts.index,
+                        y=historical_ts.values,
+                        mode='lines',
+                        name='Historical Demand',
+                        line=dict(color='#1f77b4', width=3)
+                    ))
                     
-                    # Plot forecast
-                    forecast_ts.plot(label="Forecasted Demand", linestyle="--", ax=ax, color='#ff7f0e', linewidth=2)
+                    # Add forecast data
+                    fig.add_trace(go.Scatter(
+                        x=forecast_ts.index,
+                        y=forecast_ts.values,
+                        mode='lines',
+                        name='Forecasted Demand',
+                        line=dict(color='#ff7f0e', width=3, dash='dash')
+                    ))
                     
-                    # Enhance the plot
-                    ax.set_title(f"📈 {forecast_days}-Day Demand Forecast{title_suffix}", fontsize=16, fontweight='bold')
-                    ax.set_xlabel("Date", fontsize=12)
-                    ax.set_ylabel("Quantity", fontsize=12)
-                    ax.legend(fontsize=11)
-                    ax.grid(True, alpha=0.3)
+                    # Update layout
+                    fig.update_layout(
+                        title=f"📈 {forecast_days}-Day Demand Forecast{title_suffix}",
+                        xaxis_title="Date",
+                        yaxis_title="Quantity",
+                        hovermode='x unified',
+                        showlegend=True,
+                        height=500,
+                        plot_bgcolor='rgba(248,249,250,0.8)',
+                        font=dict(size=12)
+                    )
                     
-                    # Add background color
-                    ax.set_facecolor('#f8f9fa')
-                    fig.patch.set_facecolor('white')
+                    # Add grid
+                    fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+                    fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)')
                     
-                    st.pyplot(fig)
+                    st.plotly_chart(fig, use_container_width=True)
                     
                     # Forecast data table
                     st.subheader("📅 Detailed Forecast Data")
@@ -759,7 +780,7 @@ def show_module_status():
         ("Contracting Opportunities", CONTRACTING_MODULE),
         ("LOT Size Optimization", LOT_MODULE),
         ("Seasonal Price Optimization", SEASONAL_MODULE),
-        ("Anomaly Detection", ANOMALY_MODULE),
+        ("Anomaly Detection", ANOMALY_MODULE and SKLEARN_AVAILABLE),
         ("Cross-Region Analysis", CROSS_REGION_MODULE),
         ("Reorder Prediction", REORDER_MODULE),
         ("Duplicate Detection", DUPLICATES_MODULE)
@@ -770,6 +791,10 @@ def show_module_status():
             st.sidebar.markdown(f'<div class="module-status module-available">✅ {module_name}</div>', unsafe_allow_html=True)
         else:
             st.sidebar.markdown(f'<div class="module-status module-missing">❌ {module_name}</div>', unsafe_allow_html=True)
+    
+    # Show dependency status
+    st.sidebar.subheader("🔧 Dependencies")
+    st.sidebar.markdown(f'<div class="module-status {"module-available" if SKLEARN_AVAILABLE else "module-missing"}">{"✅" if SKLEARN_AVAILABLE else "❌"} Scikit-learn</div>', unsafe_allow_html=True)
 
 def main():
     """Main application function"""
@@ -839,7 +864,7 @@ def main():
         available_modules.append("📦 LOT Size Optimization")
     if SEASONAL_MODULE:
         available_modules.append("🌟 Seasonal Price Optimization")
-    if ANOMALY_MODULE:
+    if ANOMALY_MODULE and SKLEARN_AVAILABLE:
         available_modules.append("🚨 Anomaly Detection")
     if CROSS_REGION_MODULE:
         available_modules.append("🌍 Cross-Region Analysis")
@@ -873,7 +898,7 @@ def main():
         lot_size_optimization.display(filtered_df)
     elif page == "🌟 Seasonal Price Optimization" and SEASONAL_MODULE:
         seasonal_price_optimization.display(filtered_df)
-    elif page == "🚨 Anomaly Detection" and ANOMALY_MODULE:
+    elif page == "🚨 Anomaly Detection" and ANOMALY_MODULE and SKLEARN_AVAILABLE:
         spend_categorization_anomaly.display(filtered_df)
     elif page == "🌍 Cross-Region Analysis" and CROSS_REGION_MODULE:
         cross_region.display(filtered_df)
