@@ -225,15 +225,26 @@ def load_and_clean_data(csv_file):
     conversion_count = 0
     currencies_found = set()
     
-    # Standard column mapping
+    # Enhanced column mapping for better compatibility
     column_mappings = {
-        'Creation Date': ['Creation Date', 'creation_date', 'create_date', 'po_date', 'order_date'],
-        'Vendor Name': ['Vendor Name', 'vendor_name', 'supplier_name', 'supplier'],
-        'Item': ['Item', 'item', 'item_code', 'product_code'],
-        'Item Description': ['Item Description', 'item_description', 'description', 'product_desc'],
-        'Unit Price': ['Unit Price', 'unit_price', 'price', 'cost'],
-        'Qty Delivered': ['Qty Delivered', 'qty_delivered', 'quantity_delivered', 'delivered_qty', 'quantity'],
-        'Qty Ordered': ['Qty Ordered', 'qty_ordered', 'quantity_ordered', 'ordered_qty']
+        'Creation Date': ['Creation Date', 'creation_date', 'create_date', 'po_date', 'order_date', 'date'],
+        'Vendor Name': ['Vendor Name', 'vendor_name', 'supplier_name', 'supplier', 'vendor'],
+        'Item': ['Item', 'item', 'item_code', 'product_code', 'part_number'],
+        'Item Description': ['Item Description', 'item_description', 'description', 'product_desc', 'item_desc'],
+        'Unit Price': ['Unit Price', 'unit_price', 'price', 'cost', 'unit_cost'],
+        'Qty Delivered': ['Qty Delivered', 'qty_delivered', 'quantity_delivered', 'delivered_qty', 'quantity', 'qty'],
+        'Qty Ordered': ['Qty Ordered', 'qty_ordered', 'quantity_ordered', 'ordered_qty', 'order_qty'],
+        'Qty Rejected': ['Qty Rejected', 'qty_rejected', 'rejected_qty', 'rejection_qty'],
+        'Line Total': ['Line Total', 'line_total', 'total', 'amount', 'line_amount'],
+        'Product Family': ['Product Family', 'product_family', 'category', 'product_category'],
+        'DEP': ['DEP', 'dep', 'department', 'dept'],
+        'W/H': ['W/H', 'warehouse', 'wh', 'location'],
+        'Buyer': ['Buyer', 'buyer', 'purchaser', 'buyer_name'],
+        'PO Status': ['PO Status', 'status', 'po_status', 'order_status'],
+        'Approved Date': ['Approved Date', 'approved_date', 'approval_date'],
+        'PO Receipt Date': ['PO Receipt Date', 'receipt_date', 'received_date'],
+        'Requested Delivery Date': ['Requested Delivery Date', 'requested_date', 'req_delivery_date'],
+        'Promised Delivery Date': ['Promised Delivery Date', 'promised_date', 'delivery_date']
     }
     
     # Apply column mappings
@@ -293,17 +304,37 @@ def load_and_clean_data(csv_file):
         elif 'Unit Price' in df.columns and 'Qty Ordered' in df.columns:
             df['Line Total'] = df['Unit Price'] * df['Qty Ordered']
     
+    # Add missing columns with default values for better module compatibility
+    default_columns = {
+        'Qty Rejected': 0,
+        'Product Family': 'General',
+        'DEP': 'General',
+        'W/H': 'Main',
+        'Buyer': 'System',
+        'PO Status': 'Completed'
+    }
+    
+    for col, default_val in default_columns.items():
+        if col not in df.columns:
+            df[col] = default_val
+    
+    # Ensure numeric columns are properly typed
+    numeric_columns = ['Unit Price', 'Qty Delivered', 'Qty Ordered', 'Line Total', 'Qty Rejected']
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
     # Convert date columns
     date_columns = ['Creation Date', 'Approved Date', 'PO Receipt Date', 'Requested Delivery Date', 'Promised Delivery Date']
     for col in date_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
     
-    # Clean numeric columns
-    numeric_columns = ['Unit Price', 'Qty Delivered', 'Qty Ordered', 'Line Total']
-    for col in numeric_columns:
+    # Fill missing values in text columns
+    text_columns = ['Vendor Name', 'Item Description', 'Product Family', 'DEP', 'W/H', 'Buyer', 'PO Status']
+    for col in text_columns:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df[col] = df[col].fillna('Unknown')
     
     # Store conversion info
     st.session_state['currency_conversions'] = conversion_count
@@ -384,15 +415,43 @@ def forecast_demand(df, periods=30):
     
     return daily_demand, forecast_series
 
+def safe_module_display(module, module_name, df):
+    """Safely display module with error handling"""
+    try:
+        module.display(df)
+    except Exception as e:
+        st.error(f"❌ Error in {module_name} module:")
+        st.code(str(e))
+        
+        # Provide helpful suggestions
+        st.info("💡 **Possible Solutions:**")
+        st.write("• Check if your data has the required columns")
+        st.write("• Try using a different dataset")
+        st.write("• Contact support if the error persists")
+        
+        # Show data structure for debugging
+        if st.checkbox(f"🔍 Show data structure for debugging ({module_name})"):
+            st.write("**Available Columns:**")
+            st.write(list(df.columns))
+            st.write("**Data Sample:**")
+            st.dataframe(df.head(3))
+
 @st.cache_data
 def generate_sample_data(num_records=1000):
-    """Generate sample data with multiple currencies for testing"""
+    """Generate comprehensive sample data for testing all modules"""
     np.random.seed(42)
     
     vendors = [
         "Global Tech Solutions", "Premium Office Supplies", "Industrial Materials Corp",
-        "Elite Manufacturing", "Smart Logistics Ltd", "Quality Parts Inc"
+        "Elite Manufacturing", "Smart Logistics Ltd", "Quality Parts Inc",
+        "Advanced Systems", "Corporate Supplies", "Modern Equipment"
     ]
+    
+    product_families = ['IT & Technology', 'Office Supplies', 'Raw Materials', 'Electronics', 'Facilities', 'Marketing']
+    departments = ['IT', 'Operations', 'Facilities', 'R&D', 'Marketing', 'Finance']
+    warehouses = ['WH-001', 'WH-002', 'WH-003', 'WH-CENTRAL', 'WH-NORTH']
+    buyers = ['John Smith', 'Sarah Johnson', 'Mike Chen', 'Lisa Wang', 'Ahmed Ali']
+    statuses = ['Approved', 'Delivered', 'Pending', 'Completed']
     
     currencies = ['USD', 'EUR', 'GBP', 'SAR', 'AED', 'QAR', 'INR', 'CNY']
     currency_weights = [0.30, 0.15, 0.10, 0.25, 0.08, 0.05, 0.04, 0.03]
@@ -417,21 +476,29 @@ def generate_sample_data(num_records=1000):
             price = np.random.uniform(20, 1000)
         
         creation_date = datetime.now() - timedelta(days=np.random.randint(0, 730))
+        qty_ordered = np.random.randint(1, 100)
+        qty_delivered = qty_ordered - np.random.randint(0, 5)  # Usually deliver most of what's ordered
+        qty_rejected = max(0, np.random.randint(-2, 3))  # Usually no rejections
         
         record = {
             'Creation Date': creation_date,
             'Vendor Name': np.random.choice(vendors),
             'Item': np.random.randint(1, 50),
-            'Item Description': f"Sample Product {np.random.randint(1, 100)}",
+            'Item Description': f"Sample Product {np.random.randint(1, 100)} - {np.random.choice(['Widget', 'Component', 'Tool', 'Supply'])}",
             'Unit Price': price,
             'Currency': currency if np.random.random() < 0.7 else None,
-            'Qty Delivered': np.random.randint(1, 100),
-            'Qty Ordered': np.random.randint(1, 100),
-            'Product Family': np.random.choice(['IT & Technology', 'Office Supplies', 'Raw Materials', 'Electronics']),
-            'DEP': np.random.choice(['IT', 'Operations', 'Facilities', 'R&D']),
-            'W/H': np.random.choice(['WH-001', 'WH-002', 'WH-003']),
-            'Buyer': np.random.choice(['John Smith', 'Sarah Johnson', 'Mike Chen']),
-            'PO Status': np.random.choice(['Approved', 'Delivered', 'Pending'])
+            'Qty Delivered': qty_delivered,
+            'Qty Ordered': qty_ordered,
+            'Qty Rejected': qty_rejected,
+            'Product Family': np.random.choice(product_families),
+            'DEP': np.random.choice(departments),
+            'W/H': np.random.choice(warehouses),
+            'Buyer': np.random.choice(buyers),
+            'PO Status': np.random.choice(statuses),
+            'Approved Date': creation_date + timedelta(days=np.random.randint(1, 5)),
+            'PO Receipt Date': creation_date + timedelta(days=np.random.randint(7, 14)),
+            'Requested Delivery Date': creation_date + timedelta(days=np.random.randint(14, 30)),
+            'Promised Delivery Date': creation_date + timedelta(days=np.random.randint(10, 25))
         }
         
         data.append(record)
@@ -834,9 +901,23 @@ def main():
             df = load_and_clean_data(uploaded_file)
             st.sidebar.success("✅ File loaded and processed!")
             st.session_state['data_source'] = uploaded_file.name
+            
+            # Show processing summary
+            with st.sidebar.expander("📊 Processing Summary"):
+                st.write(f"✅ **Rows processed:** {len(df):,}")
+                st.write(f"✅ **Columns mapped:** {len(df.columns)}")
+                if 'currency_conversions' in st.session_state:
+                    conv = st.session_state['currency_conversions']
+                    if conv > 0:
+                        st.write(f"💱 **Currency conversions:** {conv}")
+                        if 'currencies_found' in st.session_state:
+                            currencies = st.session_state['currencies_found']
+                            st.write(f"💰 **Currencies:** {', '.join(currencies)}")
+                    
         except Exception as e:
             st.sidebar.error(f"❌ Error loading file: {str(e)}")
-            df = generate_sample_data()
+            st.sidebar.info("🔄 Using sample data for demonstration")
+            df = load_and_clean_data(generate_sample_data())
             st.session_state['data_source'] = 'Generated Sample Data (Error Recovery)'
     else:
         # Generate sample data for demonstration
@@ -879,11 +960,22 @@ def main():
     st.sidebar.subheader("ℹ️ Data Information")
     st.sidebar.info(f"**Source:** {st.session_state.get('data_source', 'Unknown')}")
     st.sidebar.info(f"**Rows:** {len(filtered_df):,} / {len(df):,}")
+    st.sidebar.info(f"**Columns:** {len(df.columns)}")
     
     if 'currency_conversions' in st.session_state:
         conversions = st.session_state['currency_conversions']
         if conversions > 0:
             st.sidebar.success(f"💱 {conversions} values converted to SAR")
+    
+    # Data quality check
+    if st.sidebar.checkbox("📋 Show Data Quality"):
+        required_cols = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            st.sidebar.warning(f"⚠️ Missing: {', '.join(missing_cols)}")
+        else:
+            st.sidebar.success("✅ All core columns present")
     
     # Display selected page
     if page == "📊 Overview Dashboard":
@@ -893,25 +985,50 @@ def main():
     elif page == "🔍 Data Explorer":
         show_data_explorer(filtered_df)
     elif page == "🤝 Contracting Opportunities" and CONTRACTING_MODULE:
-        contracting_opportunities.display(filtered_df)
+        safe_module_display(contracting_opportunities, "Contracting Opportunities", filtered_df)
     elif page == "📦 LOT Size Optimization" and LOT_MODULE:
-        lot_size_optimization.display(filtered_df)
+        safe_module_display(lot_size_optimization, "LOT Size Optimization", filtered_df)
     elif page == "🌟 Seasonal Price Optimization" and SEASONAL_MODULE:
-        seasonal_price_optimization.display(filtered_df)
+        safe_module_display(seasonal_price_optimization, "Seasonal Price Optimization", filtered_df)
     elif page == "🚨 Anomaly Detection" and ANOMALY_MODULE and SKLEARN_AVAILABLE:
-        spend_categorization_anomaly.display(filtered_df)
+        safe_module_display(spend_categorization_anomaly, "Anomaly Detection", filtered_df)
     elif page == "🌍 Cross-Region Analysis" and CROSS_REGION_MODULE:
-        cross_region.display(filtered_df)
+        safe_module_display(cross_region, "Cross-Region Analysis", filtered_df)
     elif page == "📈 Reorder Prediction" and REORDER_MODULE:
-        reorder_prediction.display(filtered_df)
+        safe_module_display(reorder_prediction, "Reorder Prediction", filtered_df)
     elif page == "🔍 Duplicate Detection" and DUPLICATES_MODULE:
-        duplicates.display(filtered_df)
+        safe_module_display(duplicates, "Duplicate Detection", filtered_df)
     else:
         st.error("Selected module is not available. Please check module imports.")
     
-    # Footer
+    # Footer with helpful information
     st.markdown("---")
-    st.markdown("*🚀 Complete Procurement Analytics Platform - Built with Advanced AI & Multi-Currency Support*")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("*🚀 Complete Procurement Analytics Platform - Built with Advanced AI & Multi-Currency Support*")
+    
+    with col2:
+        if st.button("💡 Installation Help"):
+            st.info("""
+            **For local installation, create requirements.txt:**
+            ```
+            streamlit
+            pandas
+            plotly
+            numpy
+            scikit-learn
+            fuzzywuzzy
+            python-levenshtein
+            ```
+            
+            **Then run:**
+            ```bash
+            pip install -r requirements.txt
+            streamlit run app.py
+            ```
+            """)
+
 
 if __name__ == "__main__":
     main()
