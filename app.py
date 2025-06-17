@@ -421,13 +421,28 @@ def safe_module_display(module, module_name, df):
         module.display(df)
     except Exception as e:
         st.error(f"❌ Error in {module_name} module:")
-        st.code(str(e))
         
-        # Provide helpful suggestions
-        st.info("💡 **Possible Solutions:**")
-        st.write("• Check if your data has the required columns")
-        st.write("• Try using a different dataset")
-        st.write("• Contact support if the error persists")
+        # Show detailed error for debugging
+        error_details = str(e)
+        st.code(error_details)
+        
+        # Provide specific solutions based on module
+        if module_name == "Contracting Opportunities":
+            st.info("💡 **Contracting Opportunities Error Solutions:**")
+            st.write("• This might be a data compatibility issue")
+            st.write("• Try using the built-in Enhanced Contract Analysis below")
+            
+            # Provide enhanced contract analysis as fallback
+            st.markdown("---")
+            st.subheader("🤝 Enhanced Contract Analysis (Fallback)")
+            
+            enhanced_contract_analysis(df)
+            
+        else:
+            st.info("💡 **Possible Solutions:**")
+            st.write("• Check if your data has the required columns")
+            st.write("• Try using a different dataset")
+            st.write("• Contact support if the error persists")
         
         # Show data structure for debugging
         if st.checkbox(f"🔍 Show data structure for debugging ({module_name})"):
@@ -435,6 +450,295 @@ def safe_module_display(module, module_name, df):
             st.write(list(df.columns))
             st.write("**Data Sample:**")
             st.dataframe(df.head(3))
+
+def enhanced_contract_analysis(df):
+    """Enhanced contract analysis as fallback for contracting opportunities"""
+    
+    if df is None or df.empty:
+        st.warning("No data available for contract analysis")
+        return
+    
+    st.info("🔧 **Built-in Contract Analysis** - Enhanced fallback analysis")
+    
+    # Basic contract opportunity analysis
+    tabs = st.tabs(["📊 Spend Analysis", "🎯 Top Opportunities", "💰 Savings Potential", "📋 Recommendations"])
+    
+    with tabs[0]:
+        st.subheader("📊 Spend Analysis by Vendor")
+        
+        if 'Vendor Name' in df.columns and 'Line Total' in df.columns:
+            # Vendor spend analysis
+            vendor_spend = df.groupby('Vendor Name').agg({
+                'Line Total': ['sum', 'count', 'mean'],
+                'Item': 'nunique'
+            }).round(2)
+            
+            vendor_spend.columns = ['Total Spend', 'Order Count', 'Avg Order Value', 'Unique Items']
+            vendor_spend = vendor_spend.sort_values('Total Spend', ascending=False)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Top 10 vendors by spend
+                top_vendors = vendor_spend.head(10)
+                
+                fig = px.bar(
+                    x=top_vendors['Total Spend'],
+                    y=top_vendors.index,
+                    orientation='h',
+                    title="Top 10 Vendors by Total Spend (SAR)"
+                )
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Vendor concentration analysis
+                total_spend = vendor_spend['Total Spend'].sum()
+                top_5_concentration = (vendor_spend.head(5)['Total Spend'].sum() / total_spend * 100)
+                top_10_concentration = (vendor_spend.head(10)['Total Spend'].sum() / total_spend * 100)
+                
+                st.metric("Top 5 Vendors Concentration", f"{top_5_concentration:.1f}%")
+                st.metric("Top 10 Vendors Concentration", f"{top_10_concentration:.1f}%")
+                
+                if top_5_concentration > 60:
+                    st.warning("⚠️ High vendor concentration risk")
+                elif top_5_concentration > 40:
+                    st.info("ℹ️ Moderate vendor concentration")
+                else:
+                    st.success("✅ Good vendor diversification")
+            
+            # Detailed vendor table
+            st.subheader("📋 Detailed Vendor Analysis")
+            st.dataframe(
+                vendor_spend.head(20).style.format({
+                    'Total Spend': '{:,.0f}',
+                    'Avg Order Value': '{:,.0f}'
+                }),
+                use_container_width=True
+            )
+    
+    with tabs[1]:
+        st.subheader("🎯 Top Contract Opportunities")
+        
+        # Contract opportunity scoring
+        if 'Vendor Name' in df.columns and 'Line Total' in df.columns:
+            
+            # Configuration
+            col1, col2 = st.columns(2)
+            with col1:
+                min_annual_spend = st.number_input("Minimum Annual Spend Threshold (SAR)", 
+                                                 min_value=0, value=50000, step=10000)
+            with col2:
+                min_orders = st.number_input("Minimum Annual Orders", 
+                                           min_value=1, value=6, step=1)
+            
+            # Calculate contract opportunities
+            opportunities = []
+            
+            for vendor in df['Vendor Name'].unique():
+                vendor_data = df[df['Vendor Name'] == vendor]
+                
+                total_spend = vendor_data['Line Total'].sum()
+                order_count = len(vendor_data)
+                unique_items = vendor_data['Item'].nunique() if 'Item' in df.columns else 1
+                avg_order_value = vendor_data['Line Total'].mean()
+                
+                # Calculate opportunity score
+                spend_score = min(total_spend / min_annual_spend, 1.0) if min_annual_spend > 0 else 1.0
+                frequency_score = min(order_count / min_orders, 1.0) if min_orders > 0 else 1.0
+                consistency_score = 1 - (vendor_data['Line Total'].std() / vendor_data['Line Total'].mean()) if vendor_data['Line Total'].mean() > 0 else 0
+                consistency_score = max(0, min(1, consistency_score))
+                
+                opportunity_score = (spend_score * 0.4 + frequency_score * 0.3 + consistency_score * 0.3)
+                
+                if total_spend >= min_annual_spend * 0.5 and order_count >= min_orders * 0.5:
+                    opportunities.append({
+                        'Vendor': vendor,
+                        'Total Spend': total_spend,
+                        'Order Count': order_count,
+                        'Unique Items': unique_items,
+                        'Avg Order Value': avg_order_value,
+                        'Opportunity Score': opportunity_score,
+                        'Priority': 'High' if opportunity_score >= 0.7 else 'Medium' if opportunity_score >= 0.4 else 'Low'
+                    })
+            
+            if opportunities:
+                opp_df = pd.DataFrame(opportunities)
+                opp_df = opp_df.sort_values('Opportunity Score', ascending=False)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Opportunities", len(opp_df))
+                with col2:
+                    high_priority = len(opp_df[opp_df['Priority'] == 'High'])
+                    st.metric("High Priority", high_priority)
+                with col3:
+                    total_contract_value = opp_df['Total Spend'].sum()
+                    st.metric("Total Contract Value", f"{total_contract_value:,.0f}")
+                
+                # Opportunities table
+                st.dataframe(
+                    opp_df.style.format({
+                        'Total Spend': '{:,.0f}',
+                        'Avg Order Value': '{:,.0f}',
+                        'Opportunity Score': '{:.2f}'
+                    }),
+                    use_container_width=True
+                )
+                
+                # Priority distribution
+                priority_counts = opp_df['Priority'].value_counts()
+                fig = px.pie(
+                    values=priority_counts.values,
+                    names=priority_counts.index,
+                    title="Contract Priority Distribution",
+                    color_discrete_map={
+                        'High': '#ff6b6b',
+                        'Medium': '#ffd93d',
+                        'Low': '#6bcf7f'
+                    }
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            else:
+                st.info("No contract opportunities found with current criteria. Try lowering the thresholds.")
+    
+    with tabs[2]:
+        st.subheader("💰 Potential Savings Analysis")
+        
+        # Savings calculation
+        col1, col2 = st.columns(2)
+        with col1:
+            volume_discount = st.slider("Expected Volume Discount (%)", 0, 20, 5) / 100
+        with col2:
+            admin_savings_per_order = st.number_input("Admin Savings per Order (SAR)", 0, 500, 100)
+        
+        if 'opportunities' in locals() and opportunities:
+            savings_analysis = []
+            
+            for opp in opportunities:
+                current_annual_cost = opp['Total Spend']
+                current_orders = opp['Order Count']
+                
+                # Price savings from volume discount
+                price_savings = current_annual_cost * volume_discount
+                
+                # Admin savings (assume contract reduces order frequency by 50%)
+                reduced_orders = max(1, current_orders * 0.5)
+                admin_savings = (current_orders - reduced_orders) * admin_savings_per_order
+                
+                total_savings = price_savings + admin_savings
+                savings_percent = (total_savings / current_annual_cost * 100) if current_annual_cost > 0 else 0
+                
+                savings_analysis.append({
+                    'Vendor': opp['Vendor'],
+                    'Current Annual Cost': current_annual_cost,
+                    'Price Savings': price_savings,
+                    'Admin Savings': admin_savings,
+                    'Total Savings': total_savings,
+                    'Savings %': savings_percent
+                })
+            
+            savings_df = pd.DataFrame(savings_analysis)
+            savings_df = savings_df.sort_values('Total Savings', ascending=False)
+            
+            # Summary
+            total_potential_savings = savings_df['Total Savings'].sum()
+            total_current_cost = savings_df['Current Annual Cost'].sum()
+            overall_savings_percent = (total_potential_savings / total_current_cost * 100) if total_current_cost > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Potential Savings", f"{total_potential_savings:,.0f} SAR")
+            with col2:
+                st.metric("Overall Savings %", f"{overall_savings_percent:.1f}%")
+            with col3:
+                st.metric("Avg Savings per Vendor", f"{total_potential_savings/len(savings_df):,.0f} SAR")
+            
+            # Detailed savings table
+            st.dataframe(
+                savings_df.style.format({
+                    'Current Annual Cost': '{:,.0f}',
+                    'Price Savings': '{:,.0f}',
+                    'Admin Savings': '{:,.0f}',
+                    'Total Savings': '{:,.0f}',
+                    'Savings %': '{:.1f}%'
+                }),
+                use_container_width=True
+            )
+            
+            # Top savings opportunities chart
+            fig = px.bar(
+                savings_df.head(10),
+                x='Total Savings',
+                y='Vendor',
+                orientation='h',
+                title="Top 10 Savings Opportunities (SAR)"
+            )
+            fig.update_layout(height=500)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        else:
+            st.info("Run the opportunities analysis in the previous tab first.")
+    
+    with tabs[3]:
+        st.subheader("📋 Contract Recommendations")
+        
+        st.markdown("""
+        #### 🎯 **Contract Strategy Recommendations**
+        
+        **Phase 1: Quick Wins (Month 1-2)**
+        - Focus on top 3-5 vendors by spend
+        - Target vendors with high order frequency
+        - Negotiate volume discounts for predictable items
+        
+        **Phase 2: Strategic Contracts (Month 3-6)**
+        - Implement blanket purchase orders
+        - Establish framework agreements
+        - Set up automated ordering processes
+        
+        **Phase 3: Advanced Optimization (Month 6+)**
+        - Performance-based contracts
+        - Supplier development programs
+        - Innovation partnerships
+        
+        #### 📋 **Contract Types to Consider**
+        
+        | Contract Type | Best For | Duration | Expected Savings |
+        |---------------|----------|----------|------------------|
+        | Volume Commitment | High spend, predictable demand | 12-36 months | 5-15% |
+        | Blanket PO | Multiple items, same supplier | 12-24 months | 3-8% |
+        | Framework Agreement | Service providers | 24-48 months | 8-20% |
+        | Fixed Price | Stable market conditions | 6-18 months | 2-6% |
+        
+        #### ⚠️ **Risk Considerations**
+        
+        - **Vendor Concentration**: Monitor dependency on key suppliers
+        - **Market Volatility**: Include price adjustment clauses
+        - **Performance Risk**: Establish clear KPIs and penalties
+        - **Contract Management**: Ensure adequate resources for oversight
+        """)
+        
+        # Export recommendations
+        if st.button("📥 Export Contract Strategy Report"):
+            if 'opportunities' in locals() and opportunities:
+                export_data = {
+                    'analysis_date': datetime.now().strftime('%Y-%m-%d'),
+                    'total_opportunities': len(opportunities),
+                    'high_priority_count': len([o for o in opportunities if o['Priority'] == 'High']),
+                    'total_spend_analyzed': sum(o['Total Spend'] for o in opportunities),
+                    'recommendations': [
+                        'Implement volume discounts with top vendors',
+                        'Establish blanket purchase orders',
+                        'Negotiate performance-based contracts',
+                        'Set up automated ordering processes'
+                    ]
+                }
+                
+                st.success("✅ Analysis complete! Use the data above to develop your contract strategy.")
+            else:
+                st.info("Complete the opportunity analysis first to generate the export.")
 
 @st.cache_data
 def generate_sample_data(num_records=1000):
@@ -868,6 +1172,19 @@ def main():
     # App title and description
     st.markdown('<div class="main-header">📊 Complete Procurement Analytics Platform</div>', unsafe_allow_html=True)
     st.markdown("**Advanced procurement analytics with AI-powered insights, multi-currency support, and demand forecasting**")
+    
+    # Quick status check
+    total_modules = 7
+    available_modules_count = sum([CONTRACTING_MODULE, LOT_MODULE, SEASONAL_MODULE, 
+                                  ANOMALY_MODULE and SKLEARN_AVAILABLE, CROSS_REGION_MODULE, 
+                                  REORDER_MODULE, DUPLICATES_MODULE])
+    
+    if available_modules_count == total_modules:
+        st.success(f"🎉 All {total_modules} analytics modules are ready!")
+    elif available_modules_count > 0:
+        st.info(f"ℹ️ {available_modules_count}/{total_modules} analytics modules available. Check sidebar for details.")
+    else:
+        st.warning("⚠️ No advanced analytics modules found. Core features (Dashboard, Forecasting, Explorer) still available.")
     
     # Sidebar configuration
     st.sidebar.title("🎛️ Platform Controls")
