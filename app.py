@@ -86,6 +86,27 @@ def format_sar_currency(amount):
         return "ر.س 0.00"
     return f"ر.س {amount:,.2f}"
 
+def get_sar_columns(df):
+    """Get the appropriate SAR currency columns from dataframe"""
+    price_col = None
+    total_col = None
+    
+    # Priority order for price columns
+    price_candidates = ['Unit Price SAR', 'Price In SAR', 'Unit Price']
+    for col in price_candidates:
+        if col in df.columns:
+            price_col = col
+            break
+    
+    # Priority order for total columns  
+    total_candidates = ['Line Total SAR', 'Total In SAR', 'Line Total']
+    for col in total_candidates:
+        if col in df.columns:
+            total_col = col
+            break
+            
+    return price_col, total_col
+
 def validate_currency_conversion(df):
     """Validate currency conversions and provide detailed breakdown"""
     validation_results = {}
@@ -533,14 +554,20 @@ def display_demand_forecasting(df, csv_file):
         st.info("📊 Analyzing data for all vendors")
     
     # Currency information
-    price_col, total_col = get_sar_columns(df)
-    if 'Price In SAR' in df.columns or 'Total In SAR' in df.columns:
-        st.success("💱 Using native SAR currency columns for accurate analysis")
-    elif 'PO Currency' in df.columns:
-        unique_currencies = df['PO Currency'].value_counts()
-        st.warning(f"💱 Multiple currencies detected: {list(unique_currencies.index[:3])}. Converting to SAR for analysis.")
-    else:
-        st.info("💱 Currency: Assuming SAR for all monetary values")
+    try:
+        price_col, total_col = get_sar_columns(df)
+        if 'Price In SAR' in df.columns or 'Total In SAR' in df.columns:
+            st.success("💱 Using native SAR currency columns for accurate analysis")
+        elif 'PO Currency' in df.columns:
+            unique_currencies = df['PO Currency'].value_counts()
+            st.warning(f"💱 Multiple currencies detected: {list(unique_currencies.index[:3])}. Converting to SAR for analysis.")
+        else:
+            st.info("💱 Currency: Assuming SAR for all monetary values")
+    except:
+        # Fallback if function not available
+        price_col = 'Unit Price' if 'Unit Price' in df.columns else None
+        total_col = 'Line Total' if 'Line Total' in df.columns else None
+        st.info("💱 Currency: Using standard price columns")
     
     # Display cleaned data sample with SAR formatting
     st.subheader("📋 Cleaned PO Data Sample")
@@ -638,6 +665,9 @@ def display_demand_forecasting(df, csv_file):
                                  labels={'Transactions': 'Number of Transactions'})
             fig_timeline.update_layout(height=300)
             st.plotly_chart(fig_timeline, use_container_width=True)
+    
+    # Add Currency Validation Section
+    display_currency_validation(df)
     
     # Data quality indicators
     st.subheader("🔍 Data Quality Check")
@@ -1073,9 +1103,9 @@ def display_welcome_screen():
     modules_detailed = [
         {
             "name": "🔮 Demand Forecasting",
-            "description": "AI-powered demand forecasting with time series analysis",
-            "features": ["30-90 day forecasts", "Trend analysis", "Seasonality detection", "Risk assessment"],
-            "use_case": "Optimize inventory levels and prevent stockouts"
+            "description": "AI-powered demand forecasting with time series analysis and currency validation",
+            "features": ["30-90 day forecasts", "Trend analysis", "Seasonality detection", "Risk assessment", "SAR currency validation"],
+            "use_case": "Optimize inventory levels and prevent stockouts with accurate SAR totals"
         },
         {
             "name": "🤝 Contracting Opportunities", 
@@ -1173,6 +1203,8 @@ def display_welcome_screen():
         - Regular data updates improve forecast accuracy
         - Export results for presentation to stakeholders
         - **All analysis performed in Saudi Riyal (SAR)**
+        - **Review currency validation to ensure accurate totals**
+        - **Check exchange rate consistency for multi-currency data**
         """)
     
     # Sample data download
@@ -1214,6 +1246,8 @@ def display_welcome_screen():
     - 📊 Use the sample template as a guide
     - 🔄 Try different vendor selections for focused analysis
     - 📈 Start with smaller datasets to understand the workflow
+    - 💱 **Currency Issues:** Check the Currency Validation section for exchange rate problems
+    - 🔧 **Total Verification:** Use the manual calculation comparison to verify SAR totals
     """)
 
 if __name__ == "__main__":
