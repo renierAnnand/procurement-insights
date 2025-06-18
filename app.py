@@ -86,26 +86,192 @@ def format_sar_currency(amount):
         return "ر.س 0.00"
     return f"ر.س {amount:,.2f}"
 
-def get_sar_columns(df):
-    """Get the appropriate SAR currency columns from dataframe"""
-    price_col = None
-    total_col = None
+def validate_currency_conversion(df):
+    """Validate currency conversions and provide detailed breakdown"""
+    validation_results = {}
     
-    # Priority order for price columns
-    price_candidates = ['Unit Price SAR', 'Price In SAR', 'Unit Price']
-    for col in price_candidates:
-        if col in df.columns:
-            price_col = col
-            break
+    if 'PO Currency' not in df.columns:
+        return {"error": "No PO Currency column found"}
     
-    # Priority order for total columns  
-    total_candidates = ['Line Total SAR', 'Total In SAR', 'Line Total']
-    for col in total_candidates:
-        if col in df.columns:
-            total_col = col
-            break
+    # Get currency breakdown
+    currency_summary = df.groupby('PO Currency').agg({
+        'Unit Price': ['sum', 'count', 'mean'],
+        'Price In SAR': ['sum', 'count', 'mean'] if 'Price In SAR' in df.columns else ['sum', 'count', 'mean'],
+        'Total in Local PO Currency': ['sum', 'count'] if 'Total in Local PO Currency' in df.columns else ['sum', 'count'],
+        'Total In SAR': ['sum', 'count'] if 'Total In SAR' in df.columns else ['sum', 'count'],
+        'Qty Delivered': 'sum'
+    }).round(2)
+    
+    # Calculate implied exchange rates
+    if 'Price in Local PO Currency' in df.columns and 'Price In SAR' in df.columns:
+        df_rates = df[df['Price in Local PO Currency'] > 0].copy()
+        df_rates['Implied_Rate'] = df_rates['Price In SAR'] / df_rates['Price in Local PO Currency']
+        
+        rate_summary = df_rates.groupby('PO Currency')['Implied_Rate'].agg(['mean', 'std', 'min', 'max']).round(4)
+        validation_results['exchange_rates'] = rate_summary
+    
+    validation_results['currency_summary'] = currency_summary
+    
+    # Validate totals
+    if 'Total In SAR' in df.columns:
+        calculated_total = df['Total In SAR'].sum()
+        validation_results['total_sar'] = calculated_total
+        
+        # Check if manual calculation matches
+        if 'Price In SAR' in df.columns and 'Qty Delivered' in df.columns:
+            manual_total = (df['Price In SAR'] * df['Qty Delivered']).sum()
+            validation_results['manual_calculation'] = manual_total
+            validation_results['difference'] = abs(calculated_total - manual_total)
+    
+    return validation_results
+
+def display_currency_validation(df):
+    """Display comprehensive currency validation"""
+    st.subheader("💱 Currency Conversion Validation")
+    
+    validation = validate_currency_conversion(df)
+    
+    if 'error' in validation:
+        st.error(validation['error'])
+        return
+    
+    # Total validation
+    if 'total_sar' in validation:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Value (SAR)", format_sar_currency(validation['total_sar']))
+        
+        if 'manual_calculation' in validation:
+            with col2:
+                st.metric("Manual Calculation", format_sar_currency(validation['manual_calculation']))
+            with col3:
+                difference = validation['difference']
+                if difference < 1:
+                    st.success(f"✅ Accurate: Diff {format_sar_currency(difference)}")
+                else:
+                    st.warning(f"⚠️ Difference: {format_sar_currency(difference)}")
+    
+    # Currency breakdown
+    if 'currency_summary' in validation:
+        st.subheader("📊 Currency Breakdown")
+        
+        # Create currency summary table
+        currency_df = validation['currency_summary']
+        if not currency_df.empty:
+            # Flatten multi-level columns
+            currency_flat = pd.DataFrame()
             
-    return price_col, total_col
+            for currency in currency_df.index:
+                row_data = {
+                    'Currency': currency,
+                    'Transaction_Count': int(currency_df.loc[currency, ('Unit Price', 'count')]) if ('Unit Price', 'count') in currency_df.columns else 0,
+                    'Total_Qty': currency_df.loc[currency, ('Qty Delivered', 'sum')] if ('Qty Delivered', 'sum') in currency_df.columns else 0,
+                    'Total_SAR': currency_df.loc[currency, ('Total In SAR', 'sum')] if ('Total In SAR', 'sum') in currency_df.columns else 0,
+                    'Avg_Price_SAR': currency_df.loc[currency, ('Price In SAR', 'mean')] if ('Price In SAR', 'mean') in currency_df.columns else 0
+                }
+                currency_flat = pd.concat([currency_flat, pd.DataFrame([row_data])], ignore_index=True)
+            
+            # Format the display
+            display_currency = currency_flat.copy()
+            display_currency['Total_SAR_Formatted'] = display_currency['Total_SAR'].apply(format_sar_currency)
+            display_currency['Avg_Price_SAR_Formatted'] = display_currency['Avg_Price_SAR'].apply(format_sar_currency)
+            display_currency['Percentage'] = (display_currency['Total_SAR'] / display_currency['Total_SAR'].sum() * 100).round(1)
+            
+            # Show summary table
+            st.dataframe(
+                display_currency[['Currency', 'Transaction_Count', 'Total_Qty', 'Total_SAR_Formatted', 'Avg_Price_SAR_Formatted', 'Percentage']].rename(columns={
+                    'Transaction_Count': 'Transactions',
+                    'Total_Qty': 'Total Quantity', 
+                    'Total_SAR_Formatted': 'Total Value (SAR)',
+                    'Avg_Price_SAR_Formatted': 'Avg Price (SAR)',
+                    'Percentage': 'Value %'
+                }),
+                use_container_width=True
+            )
+    
+    # Exchange rates validation
+    if 'exchange_rates' in validation:
+        st.subheader("💹 Exchange Rate Analysis")
+        
+        rates_df = validation['exchange_rates'].reset_index()
+        
+        if not rates_df.empty:
+            st.write("**Implied Exchange Rates to SAR:**")
+            
+            # Format exchange rates display
+            display_rates = rates_df.copy()
+            display_rates = display_rates.round(4)
+            display_rates['Rate_Range'] = display_rates['min'].astype(str) + ' - ' + display_rates['max'].astype(str)
+            
+            st.dataframe(
+                display_rates.rename(columns={
+                    'PO Currency': 'Currency',
+                    'mean': 'Avg Rate',
+                    'std': 'Std Dev',
+                    'min': 'Min Rate',
+                    'max': 'Max Rate',
+                    'Rate_Range': 'Rate Range'
+                }),
+                use_container_width=True
+            )
+            
+            # Rate consistency check
+            st.write("**Rate Consistency Check:**")
+            for _, row in display_rates.iterrows():
+                currency = row['PO Currency']
+                std_dev = row['std']
+                avg_rate = row['mean']
+                
+                if pd.notna(std_dev) and avg_rate > 0:
+                    cv = (std_dev / avg_rate) * 100  # Coefficient of variation
+                    
+                    if cv < 1:
+                        st.success(f"✅ {currency}: Consistent rates (CV: {cv:.2f}%)")
+                    elif cv < 5:
+                        st.warning(f"⚠️ {currency}: Moderate variation (CV: {cv:.2f}%)")
+                    else:
+                        st.error(f"❌ {currency}: High rate variation (CV: {cv:.2f}%)")
+    
+    # Data quality checks
+    st.subheader("🔍 Data Quality Checks")
+    
+    quality_issues = []
+    
+    # Check for missing SAR values
+    if 'Price In SAR' in df.columns:
+        missing_sar_price = df['Price In SAR'].isna().sum()
+        if missing_sar_price > 0:
+            quality_issues.append(f"Missing SAR prices: {missing_sar_price:,} records")
+    
+    if 'Total In SAR' in df.columns:
+        missing_sar_total = df['Total In SAR'].isna().sum()
+        if missing_sar_total > 0:
+            quality_issues.append(f"Missing SAR totals: {missing_sar_total:,} records")
+    
+    # Check for zero values
+    if 'Price In SAR' in df.columns:
+        zero_prices = (df['Price In SAR'] == 0).sum()
+        if zero_prices > 0:
+            quality_issues.append(f"Zero SAR prices: {zero_prices:,} records")
+    
+    # Check for unrealistic exchange rates
+    if 'exchange_rates' in validation:
+        for currency in validation['exchange_rates'].index:
+            max_rate = validation['exchange_rates'].loc[currency, 'max']
+            min_rate = validation['exchange_rates'].loc[currency, 'min']
+            
+            if max_rate > 100 or min_rate < 0.001:
+                quality_issues.append(f"Unusual {currency} exchange rates: {min_rate:.4f} - {max_rate:.4f}")
+    
+    if quality_issues:
+        st.warning("⚠️ **Data Quality Issues Found:**")
+        for issue in quality_issues:
+            st.write(f"• {issue}")
+    else:
+        st.success("✅ No significant data quality issues detected")
+    
+    return validation
 
 def forecast_demand(df):
     """Enhanced demand forecasting function for procurement data"""
@@ -347,9 +513,10 @@ def main():
         display_welcome_screen()
 
 def display_demand_forecasting(df, csv_file):
-    """Enhanced demand forecasting functionality with vendor filtering"""
+    """Enhanced demand forecasting functionality with vendor filtering and SAR currency"""
     st.header("🔮 Demand Forecasting")
     st.markdown("AI-powered demand forecasting for optimal inventory planning and procurement decisions.")
+    st.info("💱 All monetary values displayed in Saudi Riyal (SAR) - ر.س")
     
     # Show filtered data info with currency information
     if 'selected_vendors' in st.session_state and st.session_state.selected_vendors:
@@ -994,6 +1161,7 @@ def display_welcome_screen():
         - Include at least 6 months of historical data
         - Ensure price and quantity fields are numeric
         - Remove test transactions and cancelled orders
+        - **Include SAR currency columns when available**
         """)
     
     with col2:
@@ -1004,25 +1172,29 @@ def display_welcome_screen():
         - Combine multiple modules for comprehensive insights
         - Regular data updates improve forecast accuracy
         - Export results for presentation to stakeholders
+        - **All analysis performed in Saudi Riyal (SAR)**
         """)
     
     # Sample data download
     st.subheader("📁 Sample Data Template")
     st.markdown("Download a sample CSV template to understand the expected data format:")
     
-    # Create extended sample data
+    # Create extended sample data with SAR currency
     extended_sample = {
         'Creation Date': pd.date_range('2024-01-01', periods=50, freq='D'),
         'Vendor Name': ['LLORI LLERENA', '33 Designs', 'AHMED ALI SALE', 'A.T. Kearney Sau', 'AAA WORLD WID'] * 10,
         'Item': [f'ITEM_{i:03d}' for i in range(1, 51)],
         'Item Description': ['Office Supplies', 'IT Equipment', 'Raw Materials', 'Professional Services', 'Facilities'] * 10,
-        'Unit Price': [round(price, 2) for price in (50 + 200 * pd.Series(range(50)).apply(lambda x: x % 10) / 10)],
+        'Unit Price': [round(price, 2) for price in (187.5 + 750 * pd.Series(range(50)).apply(lambda x: x % 10) / 10)],
+        'Price In SAR': [round(price, 2) for price in (187.5 + 750 * pd.Series(range(50)).apply(lambda x: x % 10) / 10)],
         'Qty Delivered': [int(qty) for qty in (10 + 90 * pd.Series(range(50)).apply(lambda x: (x % 7) / 7))],
+        'PO Currency': ['SAR'] * 50,
         'W/H': ['Warehouse A', 'Warehouse B', 'Warehouse C'] * 17
     }
     
     extended_df = pd.DataFrame(extended_sample)
     extended_df['Line Total'] = extended_df['Unit Price'] * extended_df['Qty Delivered']
+    extended_df['Total In SAR'] = extended_df['Price In SAR'] * extended_df['Qty Delivered']
     
     csv_template = extended_df.to_csv(index=False)
     st.download_button(
