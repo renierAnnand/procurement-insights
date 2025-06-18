@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from utils import load_and_clean_data, forecast_demand
 
 # Import all modules
@@ -281,58 +283,78 @@ def display_demand_forecasting(df, csv_file):
                 # Generate forecast using original function
                 ts, forecast = forecast_demand(df)
                 
-                # Enhanced plotting with multiple visualizations
-                fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+                # Enhanced plotting with multiple visualizations using Plotly
+                fig = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=('30-Day Demand Forecast', 'Historical Trend Analysis', 
+                                   'Historical Demand Distribution', 'Historical vs Forecast Comparison'),
+                    specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                           [{"secondary_y": False}, {"secondary_y": False}]]
+                )
                 
                 # Main forecast plot
-                ts.plot(label="Historical Demand", ax=ax1, linewidth=2, color='#1f77b4')
-                forecast.plot(label="Forecasted Demand", linestyle="--", ax=ax1, linewidth=2, color='#ff7f0e')
+                fig.add_trace(
+                    go.Scatter(x=ts.index, y=ts.values, mode='lines', name='Historical Demand',
+                             line=dict(color='#1f77b4', width=2)),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=forecast.index, y=forecast.values, mode='lines', name='Forecasted Demand',
+                             line=dict(color='#ff7f0e', width=2, dash='dash')),
+                    row=1, col=1
+                )
                 
-                ax1.set_title("30-Day Demand Forecast", fontsize=14, fontweight='bold')
-                ax1.set_xlabel("Date")
-                ax1.set_ylabel("Quantity")
-                ax1.legend()
-                ax1.grid(True, alpha=0.3)
-                
-                # Add forecast statistics
-                forecast_stats = f"Avg Daily: {forecast.mean():.1f}\nTotal: {forecast.sum():.0f}\nPeak: {forecast.max():.1f}"
-                ax1.text(0.02, 0.98, forecast_stats, transform=ax1.transAxes, 
-                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-                
-                # Historical trend analysis
+                # Historical trend analysis (7-day moving average)
                 if len(ts) > 7:
-                    ts.rolling(window=7).mean().plot(ax=ax2, label="7-day Moving Average", color='green', linewidth=2)
-                    ax2.set_title("Historical Trend Analysis")
-                    ax2.set_xlabel("Date")
-                    ax2.set_ylabel("Quantity (7-day avg)")
-                    ax2.legend()
-                    ax2.grid(True, alpha=0.3)
+                    moving_avg = ts.rolling(window=7).mean()
+                    fig.add_trace(
+                        go.Scatter(x=moving_avg.index, y=moving_avg.values, mode='lines', 
+                                 name='7-day Moving Average', line=dict(color='green', width=2)),
+                        row=1, col=2
+                    )
                 
-                # Demand distribution
-                ts.hist(ax=ax3, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
-                ax3.set_title("Historical Demand Distribution")
-                ax3.set_xlabel("Daily Demand")
-                ax3.set_ylabel("Frequency")
-                ax3.grid(True, alpha=0.3)
+                # Demand distribution histogram
+                fig.add_trace(
+                    go.Histogram(x=ts.values, name='Historical Demand Distribution', 
+                               marker_color='skyblue', opacity=0.7, nbinsx=20),
+                    row=2, col=1
+                )
                 
                 # Forecast vs Historical comparison
-                comparison_data = pd.DataFrame({
-                    'Historical_Avg': [ts.mean()],
-                    'Forecast_Avg': [forecast.mean()],
-                    'Historical_Peak': [ts.max()],
-                    'Forecast_Peak': [forecast.max()]
-                })
+                comparison_data = {
+                    'Metric': ['Historical Avg', 'Forecast Avg', 'Historical Peak', 'Forecast Peak'],
+                    'Value': [ts.mean(), forecast.mean(), ts.max(), forecast.max()],
+                    'Color': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+                }
                 
-                x_pos = range(len(comparison_data.columns))
-                ax4.bar(x_pos, comparison_data.iloc[0], color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'])
-                ax4.set_title("Historical vs Forecast Comparison")
-                ax4.set_ylabel("Quantity")
-                ax4.set_xticks(x_pos)
-                ax4.set_xticklabels(['Hist Avg', 'Fcst Avg', 'Hist Peak', 'Fcst Peak'], rotation=45)
-                ax4.grid(True, alpha=0.3)
+                fig.add_trace(
+                    go.Bar(x=comparison_data['Metric'], y=comparison_data['Value'], 
+                          name='Comparison', marker_color=comparison_data['Color']),
+                    row=2, col=2
+                )
                 
-                plt.tight_layout()
-                st.pyplot(fig)
+                # Update layout
+                fig.update_layout(
+                    height=800,
+                    showlegend=True,
+                    title_text="Comprehensive Demand Analysis Dashboard"
+                )
+                
+                # Add forecast statistics as annotation
+                forecast_stats = f"Avg Daily: {forecast.mean():.1f}<br>Total: {forecast.sum():.0f}<br>Peak: {forecast.max():.1f}"
+                fig.add_annotation(
+                    x=0.02, y=0.98,
+                    xref="paper", yref="paper",
+                    text=forecast_stats,
+                    showarrow=False,
+                    font=dict(size=10),
+                    bgcolor="lightblue",
+                    opacity=0.8,
+                    xanchor="left",
+                    yanchor="top"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
                 
                 # Forecast insights and recommendations
                 st.subheader("💡 Forecast Insights & Recommendations")
