@@ -26,7 +26,7 @@ import spend_categorization_anomaly
 st.set_page_config(page_title="Smart Procurement Analytics Suite", layout="wide")
 
 def load_and_clean_data(csv_file):
-    """Load and clean procurement data from CSV file"""
+    """Load and clean procurement data from CSV file with SAR currency prioritization"""
     try:
         # Read CSV file
         df = pd.read_csv(csv_file)
@@ -47,9 +47,28 @@ def load_and_clean_data(csv_file):
         # Remove rows with all NaN values
         df = df.dropna(how='all')
         
-        # Calculate Line Total if missing
-        if 'Line Total' not in df.columns and 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
-            df['Line Total'] = df['Unit Price'] * df['Qty Delivered']
+        # Currency handling - Prioritize SAR columns
+        if 'Price In SAR' in df.columns:
+            df['Unit Price SAR'] = df['Price In SAR']
+        elif 'Unit Price' in df.columns:
+            # If no SAR price, use original and note conversion needed
+            df['Unit Price SAR'] = df['Unit Price']
+            if 'PO Currency' in df.columns:
+                st.info("💱 Note: Currency conversion may be needed for accurate SAR values")
+        
+        if 'Total In SAR' in df.columns:
+            df['Line Total SAR'] = df['Total In SAR']
+        elif 'Line Total' in df.columns:
+            df['Line Total SAR'] = df['Line Total']
+        elif 'Unit Price SAR' in df.columns and 'Qty Delivered' in df.columns:
+            df['Line Total SAR'] = df['Unit Price SAR'] * df['Qty Delivered']
+        
+        # Ensure we have working price columns for analysis
+        if 'Unit Price SAR' not in df.columns and 'Unit Price' in df.columns:
+            df['Unit Price SAR'] = df['Unit Price']
+        
+        if 'Line Total SAR' not in df.columns and 'Line Total' in df.columns:
+            df['Line Total SAR'] = df['Line Total']
         
         # Clean vendor names (remove extra spaces)
         if 'Vendor Name' in df.columns:
@@ -60,6 +79,33 @@ def load_and_clean_data(csv_file):
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
+
+def format_sar_currency(amount):
+    """Format currency amount in SAR with proper symbol"""
+    if pd.isna(amount):
+        return "ر.س 0.00"
+    return f"ر.س {amount:,.2f}"
+
+def get_sar_columns(df):
+    """Get the appropriate SAR currency columns from dataframe"""
+    price_col = None
+    total_col = None
+    
+    # Priority order for price columns
+    price_candidates = ['Unit Price SAR', 'Price In SAR', 'Unit Price']
+    for col in price_candidates:
+        if col in df.columns:
+            price_col = col
+            break
+    
+    # Priority order for total columns  
+    total_candidates = ['Line Total SAR', 'Total In SAR', 'Line Total']
+    for col in total_candidates:
+        if col in df.columns:
+            total_col = col
+            break
+            
+    return price_col, total_col
 
 def forecast_demand(df):
     """Enhanced demand forecasting function for procurement data"""
@@ -305,7 +351,7 @@ def display_demand_forecasting(df, csv_file):
     st.header("🔮 Demand Forecasting")
     st.markdown("AI-powered demand forecasting for optimal inventory planning and procurement decisions.")
     
-    # Show filtered data info
+    # Show filtered data info with currency information
     if 'selected_vendors' in st.session_state and st.session_state.selected_vendors:
         selected_count = len(st.session_state.selected_vendors)
         st.success(f"📊 Analyzing data for {selected_count} selected vendors ({len(df):,} records)")
@@ -319,21 +365,35 @@ def display_demand_forecasting(df, csv_file):
     else:
         st.info("📊 Analyzing data for all vendors")
     
-    # Display cleaned data sample
+    # Currency information
+    price_col, total_col = get_sar_columns(df)
+    if 'Price In SAR' in df.columns or 'Total In SAR' in df.columns:
+        st.success("💱 Using native SAR currency columns for accurate analysis")
+    elif 'PO Currency' in df.columns:
+        unique_currencies = df['PO Currency'].value_counts()
+        st.warning(f"💱 Multiple currencies detected: {list(unique_currencies.index[:3])}. Converting to SAR for analysis.")
+    else:
+        st.info("💱 Currency: Assuming SAR for all monetary values")
+    
+    # Display cleaned data sample with SAR formatting
     st.subheader("📋 Cleaned PO Data Sample")
     
     # Enhanced data display with better formatting
     display_df = df.head(10)
     if not display_df.empty:
-        # Format numeric columns
-        numeric_columns = display_df.select_dtypes(include=['float64', 'int64']).columns
+        # Format numeric columns with SAR currency
         formatted_df = display_df.copy()
         
-        for col in numeric_columns:
-            if 'price' in col.lower() or 'total' in col.lower():
-                formatted_df[col] = formatted_df[col].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
+        # Get SAR columns
+        price_col, total_col = get_sar_columns(df)
+        
+        for col in formatted_df.columns:
+            if 'sar' in col.lower() or col in [price_col, total_col] or 'price' in col.lower() or 'total' in col.lower():
+                if pd.api.types.is_numeric_dtype(formatted_df[col]):
+                    formatted_df[col] = formatted_df[col].apply(lambda x: format_sar_currency(x) if pd.notnull(x) else "ر.س 0.00")
             elif 'qty' in col.lower() or 'quantity' in col.lower():
-                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "")
+                if pd.api.types.is_numeric_dtype(formatted_df[col]):
+                    formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
         
         st.dataframe(formatted_df, use_container_width=True)
     
@@ -357,20 +417,25 @@ def display_demand_forecasting(df, csv_file):
             date_range = (df['Creation Date'].max() - df['Creation Date'].min()).days
             st.metric("Date Range (Days)", f"{date_range:,}")
     
-    # Additional metrics row
+    # Additional metrics row with SAR currency
+    price_col, total_col = get_sar_columns(df)
+    
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        if 'Unit Price' in df.columns:
-            avg_price = df['Unit Price'].mean()
-            st.metric("Avg Unit Price", f"${avg_price:,.2f}")
+        if price_col and price_col in df.columns:
+            avg_price = df[price_col].mean()
+            st.metric("Avg Unit Price", format_sar_currency(avg_price))
     with col2:
         if 'Qty Delivered' in df.columns:
             total_qty = df['Qty Delivered'].sum()
             st.metric("Total Quantity", f"{total_qty:,.0f}")
     with col3:
-        if 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
-            total_value = (df['Unit Price'] * df['Qty Delivered']).sum()
-            st.metric("Total Value", f"${total_value:,.0f}")
+        if total_col and total_col in df.columns:
+            total_value = df[total_col].sum()
+            st.metric("Total Value", format_sar_currency(total_value))
+        elif price_col and price_col in df.columns and 'Qty Delivered' in df.columns:
+            total_value = (df[price_col] * df['Qty Delivered']).sum()
+            st.metric("Total Value", format_sar_currency(total_value))
     with col4:
         if len(df) > 0:
             avg_order_size = df['Qty Delivered'].mean() if 'Qty Delivered' in df.columns else 0
@@ -781,9 +846,12 @@ def display_welcome_screen():
         'Vendor Name': ['LLORI LLERENA', '33 Designs', 'AHMED ALI SALE'],
         'Item': [101, 102, 103],
         'Item Description': ['Office Supplies - Paper', 'IT Equipment - Laptop', 'Raw Materials - Steel'],
-        'Unit Price': [25.50, 1150.00, 75.25],
+        'Unit Price': [95.63, 4312.50, 282.19],
+        'Price In SAR': [95.63, 4312.50, 282.19],
         'Qty Delivered': [100, 2, 50],
-        'Line Total': [2550.00, 2300.00, 3762.50],
+        'Line Total': [9563.00, 8625.00, 14109.50],
+        'Total In SAR': [9563.00, 8625.00, 14109.50],
+        'PO Currency': ['SAR', 'SAR', 'SAR'],
         'W/H': ['Warehouse A', 'Warehouse B', 'Warehouse A']
     }
     
@@ -803,6 +871,10 @@ def display_welcome_screen():
         - 📦 **Qty Delivered** - Quantity delivered (numeric)
         - 🏢 **Vendor Name** - Supplier name (text)
         - 🛍️ **Item** - Item identifier (text/numeric)
+        
+        **💱 SAR Currency Columns (Preferred):**
+        - **Price In SAR** - Unit price in Saudi Riyal
+        - **Total In SAR** - Line total in Saudi Riyal
         """)
     
     with col2:
@@ -811,9 +883,22 @@ def display_welcome_screen():
         - 📝 **Item Description** - Detailed item description
         - 🏪 **W/H** - Warehouse or location code
         - 💵 **Line Total** - Total amount (auto-calculated if missing)
+        - 🏦 **PO Currency** - Purchase order currency
         - 📋 **Category** - Item category classification
         - 🚚 **Lead Time** - Delivery lead time in days
+        
+        **💡 Currency Handling:**
+        - System prioritizes SAR columns when available
+        - Displays all amounts in Saudi Riyal (ر.س)
+        - Auto-converts when SAR columns exist
         """)
+    
+    # Currency conversion notice
+    st.info("""
+    💱 **Currency Conversion:** This system is optimized for Saudi Riyal (SAR). 
+    If your data includes 'Price In SAR' and 'Total In SAR' columns, the system will use those for accurate analysis. 
+    Otherwise, it will use the base price columns and assume SAR currency.
+    """)
     
     # Module overview with detailed descriptions
     st.subheader("🛠️ Analytics Modules Overview")
