@@ -67,36 +67,43 @@ def main():
                 if 'selected_vendors' not in st.session_state:
                     st.session_state.selected_vendors = []
                 
-                # Select/Clear All buttons
+                # Show selection count first
+                st.sidebar.write(f"**Available Vendors:** {len(vendors)}")
+                st.sidebar.write(f"**Currently Selected:** {len(st.session_state.selected_vendors)}")
+                
+                # Select/Clear All buttons - make them more prominent
+                st.sidebar.markdown("**Quick Actions:**")
                 col1, col2 = st.sidebar.columns(2)
                 with col1:
-                    if st.button("✅ Select All", key="select_all_sidebar"):
+                    if st.sidebar.button("✅ Select All", key="select_all_sidebar", use_container_width=True):
                         st.session_state.selected_vendors = vendors.copy()
                         st.rerun()
                 
                 with col2:
-                    if st.button("❌ Clear All", key="clear_all_sidebar"):
+                    if st.sidebar.button("❌ Clear All", key="clear_all_sidebar", use_container_width=True):
                         st.session_state.selected_vendors = []
                         st.rerun()
                 
-                # Show selection count
-                st.sidebar.write(f"**Selected:** {len(st.session_state.selected_vendors)}/{len(vendors)}")
+                # Add some space
+                st.sidebar.write("")
                 
                 # Multi-select widget
                 selected_vendors = st.sidebar.multiselect(
-                    "Choose vendors:",
+                    "Choose specific vendors:",
                     options=vendors,
                     default=st.session_state.selected_vendors,
-                    key="vendor_multiselect_sidebar"
+                    key="vendor_multiselect_sidebar",
+                    help="Use the buttons above to select/clear all vendors quickly"
                 )
                 
-                # Update session state
-                st.session_state.selected_vendors = selected_vendors
+                # Update session state when multiselect changes
+                if selected_vendors != st.session_state.selected_vendors:
+                    st.session_state.selected_vendors = selected_vendors
                 
                 # Filter data by selected vendors
-                if selected_vendors:
-                    df_filtered = df[df['Vendor Name'].isin(selected_vendors)]
-                    st.sidebar.success(f"✅ Using {len(selected_vendors)} vendors ({len(df_filtered):,} records)")
+                if st.session_state.selected_vendors:
+                    df_filtered = df[df['Vendor Name'].isin(st.session_state.selected_vendors)]
+                    st.sidebar.success(f"✅ Using {len(st.session_state.selected_vendors)} vendors ({len(df_filtered):,} records)")
                 else:
                     df_filtered = df
                     st.sidebar.info("ℹ️ Using all vendors (no filter applied)")
@@ -234,7 +241,7 @@ def display_demand_forecasting(df, csv_file):
             quality_metrics['Vendor Completeness'] = f"{vendor_completeness:.1f}%"
     
     # Display quality metrics
-    quality_cols = st.columns(len(quality_metrics))
+    quality_cols = st.columns(len(quality_metrics)) if quality_metrics else st.columns(1)
     for i, (metric, value) in enumerate(quality_metrics.items()):
         with quality_cols[i]:
             # Color code based on completeness
@@ -333,7 +340,7 @@ def display_demand_forecasting(df, csv_file):
                 # Calculate insights
                 historical_avg = ts.mean()
                 forecast_avg = forecast.mean()
-                trend_indicator = ((forecast_avg - historical_avg) / historical_avg) * 100
+                trend_indicator = ((forecast_avg - historical_avg) / historical_avg) * 100 if historical_avg > 0 else 0
                 
                 col1, col2, col3 = st.columns(3)
                 
