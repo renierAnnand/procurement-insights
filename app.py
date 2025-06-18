@@ -376,6 +376,37 @@ def display_demand_forecasting(df, csv_file):
             avg_order_size = df['Qty Delivered'].mean() if 'Qty Delivered' in df.columns else 0
             st.metric("Avg Order Size", f"{avg_order_size:,.1f}")
     
+    # Data Date Range Information
+    if 'Creation Date' in df.columns:
+        st.subheader("📅 Data Coverage Period")
+        df_dates = df['Creation Date'].dropna()
+        if len(df_dates) > 0:
+            earliest_date = df_dates.min()
+            latest_date = df_dates.max()
+            date_span = (latest_date - earliest_date).days
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Start Date", earliest_date.strftime('%Y-%m-%d'))
+            with col2:
+                st.metric("End Date", latest_date.strftime('%Y-%m-%d'))
+            with col3:
+                st.metric("Total Days", f"{date_span:,}")
+            with col4:
+                data_months = round(date_span / 30.44, 1)  # Average days per month
+                st.metric("Coverage (Months)", f"{data_months}")
+            
+            # Visual timeline
+            st.write("**Data Timeline:**")
+            timeline_df = df.groupby(df['Creation Date'].dt.date).size().reset_index()
+            timeline_df.columns = ['Date', 'Transactions']
+            
+            fig_timeline = px.line(timeline_df, x='Date', y='Transactions', 
+                                 title="Daily Transaction Volume Over Time",
+                                 labels={'Transactions': 'Number of Transactions'})
+            fig_timeline.update_layout(height=300)
+            st.plotly_chart(fig_timeline, use_container_width=True)
+    
     # Data quality indicators
     st.subheader("🔍 Data Quality Check")
     
@@ -565,14 +596,14 @@ def display_demand_forecasting(df, csv_file):
                 forecast_df = forecast_df[['Date', 'Day_of_Week', 'Forecasted_Quantity', 
                                         'Lower_Bound', 'Upper_Bound', 'Cumulative_Forecast']].reset_index(drop=True)
                 
-                # Format and display with styling
+                # Format and display with styling (without matplotlib dependency)
                 st.dataframe(
                     forecast_df.style.format({
                         'Forecasted_Quantity': '{:.1f}',
                         'Lower_Bound': '{:.1f}',
                         'Upper_Bound': '{:.1f}',
                         'Cumulative_Forecast': '{:.0f}'
-                    }).background_gradient(subset=['Forecasted_Quantity'], cmap='Blues'),
+                    }),
                     use_container_width=True
                 )
                 
