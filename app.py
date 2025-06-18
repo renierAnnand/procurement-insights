@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils import load_and_clean_data, forecast_demand
+import numpy as np
+from datetime import datetime, timedelta
 
 # Import all modules
 import contracting_opportunities
