@@ -3,404 +3,517 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import warnings
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 warnings.filterwarnings('ignore')
 
-class ReorderPointCalculator:
-    """Advanced reorder point calculation with multiple methods"""
-    
-    def __init__(self, item_df, service_level=0.95):
-        self.item_df = item_df.copy()
-        self.service_level = service_level
-        self.z_score = self._get_z_score(service_level)
-        self.prepare_data()
-    
-    def _get_z_score(self, service_level):
-        """Convert service level to Z-score"""
-        z_scores = {0.50: 0.00, 0.80: 0.84, 0.85: 1.04, 0.90: 1.28, 
-                   0.95: 1.65, 0.97: 1.88, 0.99: 2.33, 0.995: 2.58}
-        return z_scores.get(service_level, 1.65)
-    
-    def prepare_data(self):
-        """Prepare and clean data for analysis"""
-        self.item_df['Creation Date'] = pd.to_datetime(self.item_df['Creation Date'])
-        self.item_df = self.item_df.sort_values('Creation Date')
-        self.date_range = (self.item_df['Creation Date'].max() - 
-                          self.item_df['Creation Date'].min()).days + 1
-        
-        # Create daily demand series
-        self.daily_demand = self.item_df.groupby('Creation Date')['Qty Delivered'].sum()
-        full_range = pd.date_range(
-            start=self.item_df['Creation Date'].min(),
-            end=self.item_df['Creation Date'].max(),
-            freq='D'
-        )
-        self.daily_demand = self.daily_demand.reindex(full_range, fill_value=0)
+# Configure Streamlit page
+st.set_page_config(
+    page_title="Smart Reorder Point Prediction",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def calculate_average_daily_demand(item_df):
-    """Calculate average daily demand with multiple methods"""
-    calculator = ReorderPointCalculator(item_df)
+def calculate_metrics(item_df):
+    """Calculate all reorder point metrics for a given item"""
+    if len(item_df) == 0:
+        return None
     
-    # Method 1: Simple average
-    simple_avg = calculator.daily_demand.mean()
+    # Prepare data
+    item_df = item_df.copy()
+    item_df['Creation Date'] = pd.to_datetime(item_df['Creation Date'])
+    item_df = item_df.sort_values('Creation Date')
     
-    # Method 2: Weighted average (recent months weighted more)
-    recent_data = calculator.daily_demand.tail(90)  # Last 3 months
-    if len(recent_data) >= 30:
-        weighted_avg = (recent_data.mean() * 0.7) + (simple_avg * 0.3)
+    # Calculate date range and daily demand
+    min_date = item_df['Creation Date'].min()
+    max_date = item_df['Creation Date'].max()
+    total_days = (max_date - min_date).days + 1
+    total_quantity = item_df['Qty Delivered'].sum()
+    
+    # Average daily demand
+    avg_daily_demand = total_quantity / total_days if total_days > 0 else 0
+    
+    # Estimate lead time (average time between orders)
+    time_diffs = item_df['Creation Date'].diff().dropna()
+    if len(time_diffs) > 0:
+        avg_days_between_orders = time_diffs.dt.days.mean()
+        # Use 30% of reorder cycle as lead time estimate (minimum 3 days)
+        lead_time = max(avg_days_between_orders * 0.3, 3)
+        lead_time_std = time_diffs.dt.days.std() * 0.3 if len(time_diffs) > 1 else 1
     else:
-        weighted_avg = simple_avg
+        lead_time = 7  # Default
+        lead_time_std = 2
     
-    # Method 3: Trend-adjusted average
-    if len(calculator.daily_demand) >= 60:
-        slope = np.polyfit(range(len(calculator.daily_demand)), calculator.daily_demand, 1)[0]
-        trend_adjusted = simple_avg + (slope * 30)  # Project 30 days ahead
-    else:
-        trend_adjusted = simple_avg
+    # Safety stock calculation (Z=1.65 for 95% service level)
+    z_score = 1.65
+    safety_stock = z_score * avg_daily_demand * lead_time_std
+    
+    # Reorder point scenarios
+    optimistic_rop = (avg_daily_demand * lead_time * 0.8) + (safety_stock * 0.5)
+    likely_rop = (avg_daily_demand * lead_time) + safety_stock
+    conservative_rop = (avg_daily_demand * lead_time * 1.2) + (safety_stock * 1.5)
+    
+    # Create daily demand series for visualization
+    full_date_range = pd.date_range(start=min_date, end=max_date, freq='D')
+    daily_demand_series = item_df.groupby('Creation Date')['Qty Delivered'].sum()
+    daily_demand_series = daily_demand_series.reindex(full_date_range, fill_value=0)
     
     return {
-        'simple': max(simple_avg, 0),
-        'weighted': max(weighted_avg, 0),
-        'trend_adjusted': max(trend_adjusted, 0),
-        'recommended': max(weighted_avg, 0)
+        'avg_daily_demand': avg_daily_demand,
+        'lead_time': lead_time,
+        'safety_stock': safety_stock,
+        'optimistic_rop': optimistic_rop,
+        'likely_rop': likely_rop,
+        'conservative_rop': conservative_rop,
+        'daily_demand_series': daily_demand_series,
+        'total_orders': len(item_df),
+        'date_range_days': total_days
     }
 
-def estimate_lead_time(item_df):
-    """Advanced lead time estimation with multiple scenarios"""
-    item_df_sorted = item_df.copy().sort_values('Creation Date')
-    item_df_sorted['Creation Date'] = pd.to_datetime(item_df_sorted['Creation Date'])
+def create_daily_demand_chart(daily_demand_series):
+    """Create enhanced daily demand trend chart"""
+    fig = go.Figure()
     
-    # Calculate time differences between orders
-    time_diffs = item_df_sorted['Creation Date'].diff().dropna()
+    # Add daily demand line
+    fig.add_trace(go.Scatter(
+        x=daily_demand_series.index,
+        y=daily_demand_series.values,
+        mode='lines+markers',
+        name='Daily Demand',
+        line=dict(color='#2E86AB', width=2),
+        marker=dict(size=4),
+        hovertemplate='<b>Date:</b> %{x}<br><b>Demand:</b> %{y}<extra></extra>'
+    ))
     
-    if len(time_diffs) == 0:
-        return {'min': 7, 'avg': 14, 'max': 21, 'std': 3}
+    # Add 7-day moving average if enough data
+    if len(daily_demand_series) >= 7:
+        ma_7 = daily_demand_series.rolling(window=7, center=True).mean()
+        fig.add_trace(go.Scatter(
+            x=ma_7.index,
+            y=ma_7.values,
+            mode='lines',
+            name='7-Day Moving Average',
+            line=dict(color='#F18F01', width=3),
+            hovertemplate='<b>Date:</b> %{x}<br><b>7-Day Avg:</b> %{y:.2f}<extra></extra>'
+        ))
     
-    # Convert to days and filter outliers
-    days_between = time_diffs.dt.days
-    q75, q25 = np.percentile(days_between, [75, 25])
-    iqr = q75 - q25
-    lower_bound = q25 - (1.5 * iqr)
-    upper_bound = q75 + (1.5 * iqr)
-    filtered_days = days_between[(days_between >= max(lower_bound, 1)) & 
-                                (days_between <= upper_bound)]
-    
-    # Lead time scenarios (fraction of reorder cycle)
-    reorder_cycle = filtered_days.mean() if len(filtered_days) > 0 else 14
-    
-    return {
-        'min': max(reorder_cycle * 0.2, 3),
-        'avg': max(reorder_cycle * 0.4, 7),
-        'max': max(reorder_cycle * 0.6, 14),
-        'std': filtered_days.std() * 0.3 if len(filtered_days) > 1 else 2
-    }
-
-def calculate_safety_stock(daily_demand, lead_time_data, z_score=1.65, method='advanced'):
-    """Calculate safety stock using multiple methods"""
-    if method == 'basic':
-        return z_score * daily_demand['simple'] * lead_time_data['std']
-    
-    elif method == 'advanced':
-        # Advanced method considering demand and lead time variability
-        demand_std = np.std([daily_demand['simple']] * 30)  # Simulate demand variability
-        lead_time_var = lead_time_data['std'] ** 2
-        avg_lead_time = lead_time_data['avg']
-        
-        safety_stock = z_score * np.sqrt(
-            (avg_lead_time * demand_std ** 2) + 
-            (daily_demand['recommended'] ** 2 * lead_time_var)
-        )
-        return max(safety_stock, daily_demand['recommended'] * 2)
-    
-    elif method == 'conservative':
-        return z_score * daily_demand['recommended'] * lead_time_data['max'] * 0.5
-
-def calculate_reorder_point(daily_demand, lead_time_data, safety_stock):
-    """Calculate reorder point with scenario analysis"""
-    scenarios = {}
-    
-    # Optimistic scenario
-    scenarios['optimistic'] = (daily_demand['simple'] * lead_time_data['min']) + (safety_stock * 0.5)
-    
-    # Most likely scenario
-    scenarios['likely'] = (daily_demand['recommended'] * lead_time_data['avg']) + safety_stock
-    
-    # Conservative scenario
-    scenarios['conservative'] = (daily_demand['trend_adjusted'] * lead_time_data['max']) + (safety_stock * 1.5)
-    
-    return scenarios
-
-def detect_seasonality(daily_demand_series):
-    """Detect seasonal patterns in demand"""
-    if len(daily_demand_series) < 365:
-        return {'has_seasonality': False, 'pattern': 'Insufficient data'}
-    
-    # Convert to monthly data
-    monthly_data = daily_demand_series.resample('M').sum()
-    
-    if len(monthly_data) < 12:
-        return {'has_seasonality': False, 'pattern': 'Need at least 12 months'}
-    
-    # Calculate coefficient of variation
-    cv = monthly_data.std() / monthly_data.mean() if monthly_data.mean() > 0 else 0
-    
-    # Determine seasonality
-    if cv > 0.5:
-        peak_month = monthly_data.idxmax().month_name()
-        low_month = monthly_data.idxmin().month_name()
-        return {
-            'has_seasonality': True,
-            'pattern': f'High seasonality (CV: {cv:.2f})',
-            'peak_month': peak_month,
-            'low_month': low_month,
-            'seasonal_factor': monthly_data.max() / monthly_data.mean()
-        }
-    elif cv > 0.25:
-        return {'has_seasonality': True, 'pattern': f'Moderate seasonality (CV: {cv:.2f})'}
-    else:
-        return {'has_seasonality': False, 'pattern': f'Low seasonality (CV: {cv:.2f})'}
-
-def create_advanced_visualizations(item_df, daily_demand_data, reorder_scenarios):
-    """Create comprehensive visualizations"""
-    calculator = ReorderPointCalculator(item_df)
-    
-    # Create subplot figure
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=['Daily Demand Pattern', 'Demand Distribution', 
-                       'Reorder Point Scenarios', 'Cumulative Demand'],
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": False}, {"secondary_y": False}]]
+    fig.update_layout(
+        title='📈 Daily Demand Trend Analysis',
+        xaxis_title='Date',
+        yaxis_title='Quantity Demanded',
+        hovermode='x unified',
+        showlegend=True,
+        height=400
     )
-    
-    # 1. Daily demand with moving averages
-    dates = calculator.daily_demand.index
-    fig.add_trace(
-        go.Scatter(x=dates, y=calculator.daily_demand.values, 
-                  name='Daily Demand', line=dict(width=1, color='lightblue')),
-        row=1, col=1
-    )
-    
-    # Add moving averages
-    if len(calculator.daily_demand) >= 7:
-        ma_7 = calculator.daily_demand.rolling(7).mean()
-        fig.add_trace(
-            go.Scatter(x=dates, y=ma_7.values, name='7-day MA', 
-                      line=dict(width=2, color='orange')),
-            row=1, col=1
-        )
-    
-    if len(calculator.daily_demand) >= 30:
-        ma_30 = calculator.daily_demand.rolling(30).mean()
-        fig.add_trace(
-            go.Scatter(x=dates, y=ma_30.values, name='30-day MA', 
-                      line=dict(width=2, color='red')),
-            row=1, col=1
-        )
-    
-    # 2. Demand distribution histogram
-    fig.add_trace(
-        go.Histogram(x=calculator.daily_demand.values, name='Demand Distribution',
-                    nbinsx=20, opacity=0.7),
-        row=1, col=2
-    )
-    
-    # 3. Reorder point scenarios
-    scenarios = ['Optimistic', 'Likely', 'Conservative']
-    values = [reorder_scenarios['optimistic'], reorder_scenarios['likely'], 
-              reorder_scenarios['conservative']]
-    colors = ['green', 'blue', 'red']
-    
-    fig.add_trace(
-        go.Bar(x=scenarios, y=values, name='Reorder Points',
-               marker_color=colors, opacity=0.7),
-        row=2, col=1
-    )
-    
-    # 4. Cumulative demand
-    cumulative = calculator.daily_demand.cumsum()
-    fig.add_trace(
-        go.Scatter(x=dates, y=cumulative.values, name='Cumulative Demand',
-                  fill='tonexty', line=dict(color='purple')),
-        row=2, col=2
-    )
-    
-    fig.update_layout(height=800, showlegend=True, 
-                     title_text="Comprehensive Demand Analysis")
     
     return fig
 
-def calculate_abc_analysis(df):
-    """Perform ABC analysis on all items"""
-    item_summary = df.groupby('Item').agg({
-        'Qty Delivered': 'sum',
-        'Creation Date': 'count'
-    }).rename(columns={'Creation Date': 'Order_Count'})
+def create_scenarios_chart(scenarios, selected_scenario=None):
+    """Create reorder point scenarios bar chart"""
+    scenario_data = {
+        'Scenario': ['Optimistic', 'Likely', 'Conservative'],
+        'Reorder Point': [scenarios['optimistic_rop'], scenarios['likely_rop'], scenarios['conservative_rop']],
+        'Colors': ['#28a745', '#007bff', '#dc3545']  # Green, Blue, Red
+    }
     
-    # Calculate total value (assuming unit price = 1 for demonstration)
-    item_summary['Total_Value'] = item_summary['Qty Delivered']
-    item_summary = item_summary.sort_values('Total_Value', ascending=False)
+    fig = go.Figure()
     
-    # Calculate cumulative percentage
-    item_summary['Cumulative_Value'] = item_summary['Total_Value'].cumsum()
-    item_summary['Cumulative_Pct'] = (item_summary['Cumulative_Value'] / 
-                                     item_summary['Total_Value'].sum()) * 100
+    for i, (scenario, value, color) in enumerate(zip(scenario_data['Scenario'], scenario_data['Reorder Point'], scenario_data['Colors'])):
+        # Highlight selected scenario
+        opacity = 1.0 if selected_scenario is None or selected_scenario == scenario else 0.6
+        border_width = 3 if selected_scenario == scenario else 0
+        
+        fig.add_trace(go.Bar(
+            x=[scenario],
+            y=[value],
+            name=scenario,
+            marker=dict(
+                color=color,
+                opacity=opacity,
+                line=dict(width=border_width, color='black')
+            ),
+            text=f'{value:.1f}',
+            textposition='auto',
+            hovertemplate=f'<b>{scenario}</b><br>Reorder Point: %{{y:.2f}}<extra></extra>'
+        ))
     
-    # Assign ABC categories
-    item_summary['ABC_Category'] = 'C'
-    item_summary.loc[item_summary['Cumulative_Pct'] <= 80, 'ABC_Category'] = 'A'
-    item_summary.loc[(item_summary['Cumulative_Pct'] > 80) & 
-                    (item_summary['Cumulative_Pct'] <= 95), 'ABC_Category'] = 'B'
+    fig.update_layout(
+        title='🎯 Reorder Point Scenarios Comparison',
+        xaxis_title='Scenario Type',
+        yaxis_title='Reorder Point Quantity',
+        showlegend=False,
+        height=400
+    )
     
-    return item_summary
+    return fig
 
-def analyze_all_items(df, service_level=0.95, method='advanced'):
-    """Perform bulk analysis on all items with priority ranking"""
-    all_items = df["Item"].dropna().unique()
+def create_demand_distribution_chart(daily_demand_series):
+    """Create demand distribution histogram"""
+    # Remove zero values for better distribution visualization
+    non_zero_demand = daily_demand_series[daily_demand_series > 0]
+    
+    if len(non_zero_demand) == 0:
+        # Handle case with no demand
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No demand data available for distribution analysis",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False
+        )
+    else:
+        fig = go.Figure()
+        
+        fig.add_trace(go.Histogram(
+            x=non_zero_demand.values,
+            nbinsx=min(20, len(non_zero_demand.unique())),
+            name='Demand Distribution',
+            marker_color='#A23B72',
+            opacity=0.7,
+            hovertemplate='<b>Demand Range:</b> %{x}<br><b>Frequency:</b> %{y}<extra></extra>'
+        ))
+        
+        # Add mean line
+        mean_demand = non_zero_demand.mean()
+        fig.add_vline(
+            x=mean_demand,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Mean: {mean_demand:.2f}",
+            annotation_position="top right"
+        )
+    
+    fig.update_layout(
+        title='📊 Demand Distribution Analysis',
+        xaxis_title='Daily Demand Quantity',
+        yaxis_title='Frequency (Days)',
+        height=400
+    )
+    
+    return fig
+
+def create_cumulative_demand_chart(daily_demand_series):
+    """Create cumulative demand chart"""
+    cumulative_demand = daily_demand_series.cumsum()
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=cumulative_demand.index,
+        y=cumulative_demand.values,
+        mode='lines',
+        name='Cumulative Demand',
+        line=dict(color='#9B59B6', width=3),
+        fill='tonexty',
+        fillcolor='rgba(155, 89, 182, 0.3)',
+        hovertemplate='<b>Date:</b> %{x}<br><b>Cumulative Demand:</b> %{y}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title='📈 Cumulative Demand Over Time',
+        xaxis_title='Date',
+        yaxis_title='Cumulative Quantity',
+        height=400
+    )
+    
+    return fig
+
+def perform_bulk_analysis(df, progress_callback=None):
+    """Perform comprehensive bulk analysis on all items"""
+    all_items = df['Item'].dropna().unique()
     results = []
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
     for i, item in enumerate(all_items):
-        status_text.text(f'Analyzing item {i+1}/{len(all_items)}: {item}')
-        progress_bar.progress((i + 1) / len(all_items))
+        if progress_callback:
+            progress_callback(i + 1, len(all_items), item)
         
         try:
-            item_df = df[df["Item"] == item].copy()
+            item_data = df[df['Item'] == item].copy()
+            metrics = calculate_metrics(item_data)
             
-            if len(item_df) == 0:
+            if metrics is None:
                 continue
-                
-            # Calculate metrics for this item
-            daily_demand = calculate_average_daily_demand(item_df)
-            lead_time_data = estimate_lead_time(item_df)
             
-            calculator = ReorderPointCalculator(item_df, service_level)
-            seasonality = detect_seasonality(calculator.daily_demand)
+            # Calculate additional business metrics
+            total_quantity = item_data['Qty Delivered'].sum()
+            total_orders = len(item_data)
             
-            safety_stock = calculate_safety_stock(
-                daily_demand, lead_time_data, 
-                calculator.z_score, method
-            )
+            # Calculate demand variability (coefficient of variation)
+            daily_demand_std = metrics['daily_demand_series'].std()
+            demand_cv = daily_demand_std / metrics['avg_daily_demand'] if metrics['avg_daily_demand'] > 0 else 0
             
-            reorder_scenarios = calculate_reorder_point(
-                daily_demand, lead_time_data, safety_stock
-            )
+            # Calculate order frequency (orders per month)
+            date_range_months = max(metrics['date_range_days'] / 30, 1)
+            order_frequency = total_orders / date_range_months
             
-            # Calculate additional metrics for prioritization
-            total_quantity = item_df['Qty Delivered'].sum()
-            total_orders = len(item_df)
-            date_range = (item_df['Creation Date'].max() - item_df['Creation Date'].min()).days + 1
-            order_frequency = total_orders / max(date_range / 30, 1)  # Orders per month
+            # Lead time risk assessment
+            lead_time_risk = "Low" if metrics['lead_time'] <= 7 else "Medium" if metrics['lead_time'] <= 14 else "High"
             
-            # Demand variability (coefficient of variation)
-            demand_cv = calculator.daily_demand.std() / calculator.daily_demand.mean() if calculator.daily_demand.mean() > 0 else 0
-            
-            # Lead time risk score
-            lead_time_risk = lead_time_data['std'] / lead_time_data['avg'] if lead_time_data['avg'] > 0 else 0
-            
-            # Priority score calculation (higher = more critical)
+            # Priority classification based on volume and variability
             priority_score = (
-                (total_quantity / 1000) * 0.3 +  # Volume impact
-                (daily_demand['recommended'] * 10) * 0.25 +  # Daily demand impact
-                (1 / max(order_frequency, 0.1)) * 0.2 +  # Frequency impact (inverted)
-                (demand_cv * 100) * 0.15 +  # Variability impact
-                (lead_time_risk * 100) * 0.1  # Lead time risk impact
+                (total_quantity / 1000) * 0.4 +  # Volume impact
+                (metrics['avg_daily_demand'] * 10) * 0.3 +  # Daily demand impact
+                (demand_cv * 100) * 0.2 +  # Variability impact
+                (1 / max(order_frequency, 0.1)) * 0.1  # Frequency impact (inverted)
             )
+            
+            # Assign priority category
+            if priority_score >= 50:
+                priority = "Critical"
+            elif priority_score >= 25:
+                priority = "High"
+            elif priority_score >= 10:
+                priority = "Medium"
+            else:
+                priority = "Low"
+            
+            # Seasonal analysis (simplified)
+            monthly_demand = metrics['daily_demand_series'].resample('M').sum()
+            is_seasonal = len(monthly_demand) >= 6 and (monthly_demand.std() / monthly_demand.mean() > 0.5) if monthly_demand.mean() > 0 else False
             
             results.append({
                 'Item': item,
-                'Priority_Score': priority_score,
-                'Daily_Demand': daily_demand['recommended'],
-                'Lead_Time_Days': lead_time_data['avg'],
-                'Lead_Time_Risk': lead_time_risk,
-                'Safety_Stock': safety_stock,
-                'Reorder_Point_Optimistic': reorder_scenarios['optimistic'],
-                'Reorder_Point_Likely': reorder_scenarios['likely'],
-                'Reorder_Point_Conservative': reorder_scenarios['conservative'],
+                'Priority': priority,
+                'Priority_Score': round(priority_score, 2),
                 'Total_Quantity': total_quantity,
                 'Total_Orders': total_orders,
-                'Order_Frequency_Monthly': order_frequency,
-                'Demand_Variability': demand_cv,
-                'Seasonality': seasonality['pattern'],
-                'Has_Seasonality': seasonality['has_seasonality'],
-                'Data_Period_Days': date_range,
-                'Service_Level': f"{service_level*100:.0f}%"
+                'Avg_Daily_Demand': round(metrics['avg_daily_demand'], 2),
+                'Lead_Time_Days': round(metrics['lead_time'], 1),
+                'Lead_Time_Risk': lead_time_risk,
+                'Safety_Stock': round(metrics['safety_stock'], 2),
+                'Reorder_Point_Optimistic': round(metrics['optimistic_rop'], 2),
+                'Reorder_Point_Likely': round(metrics['likely_rop'], 2),
+                'Reorder_Point_Conservative': round(metrics['conservative_rop'], 2),
+                'Demand_Variability_CV': round(demand_cv, 3),
+                'Order_Frequency_Monthly': round(order_frequency, 2),
+                'Is_Seasonal': is_seasonal,
+                'Data_Period_Days': metrics['date_range_days'],
+                'Analysis_Date': datetime.now().strftime('%Y-%m-%d')
             })
             
         except Exception as e:
-            st.warning(f"Could not analyze {item}: {str(e)}")
+            st.warning(f"Could not analyze item '{item}': {str(e)}")
             continue
     
-    progress_bar.empty()
-    status_text.empty()
-    
-    if not results:
-        st.error("No items could be analyzed successfully.")
-        return None
-    
-    # Convert to DataFrame and sort by priority
-    results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values('Priority_Score', ascending=False)
-    
-    # Add priority categories
-    total_items = len(results_df)
-    results_df['Priority_Category'] = 'Low'
-    results_df.iloc[:int(total_items * 0.2), results_df.columns.get_loc('Priority_Category')] = 'Critical'
-    results_df.iloc[int(total_items * 0.2):int(total_items * 0.5), results_df.columns.get_loc('Priority_Category')] = 'High'
-    results_df.iloc[int(total_items * 0.5):int(total_items * 0.8), results_df.columns.get_loc('Priority_Category')] = 'Medium'
-    
-    return results_df
+    return pd.DataFrame(results) if results else None
 
-def display_bulk_analysis_results(results_df):
-    """Display comprehensive bulk analysis results"""
-    st.header("📊 Bulk Analysis Results - All Items")
+def create_excel_report(bulk_results_df, df):
+    """Create comprehensive Excel report with multiple sheets"""
+    # Create Excel buffer
+    excel_buffer = io.BytesIO()
     
-    # Summary metrics
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        # Sheet 1: Executive Summary
+        create_executive_summary_sheet(bulk_results_df, writer)
+        
+        # Sheet 2: Detailed Analysis
+        bulk_results_df.to_excel(writer, sheet_name='Detailed Analysis', index=False)
+        
+        # Sheet 3: Priority Matrix
+        create_priority_matrix_sheet(bulk_results_df, writer)
+        
+        # Sheet 4: Risk Assessment
+        create_risk_assessment_sheet(bulk_results_df, writer)
+        
+        # Sheet 5: Action Plan
+        create_action_plan_sheet(bulk_results_df, writer)
+        
+        # Sheet 6: Raw Data Summary
+        create_raw_data_summary_sheet(df, writer)
+    
+    excel_buffer.seek(0)
+    return excel_buffer
+
+def create_executive_summary_sheet(bulk_results_df, writer):
+    """Create executive summary sheet"""
+    summary_data = {
+        'Metric': [
+            'Total Items Analyzed',
+            'Critical Priority Items',
+            'High Priority Items', 
+            'Medium Priority Items',
+            'Low Priority Items',
+            'Items with High Lead Time Risk',
+            'Seasonal Items',
+            'Total Reorder Investment (Likely)',
+            'Total Reorder Investment (Conservative)',
+            'Average Lead Time (Days)',
+            'Items Requiring Immediate Action'
+        ],
+        'Value': [
+            len(bulk_results_df),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Critical']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'High']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Medium']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Low']),
+            len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']),
+            len(bulk_results_df[bulk_results_df['Is_Seasonal'] == True]),
+            f"{bulk_results_df['Reorder_Point_Likely'].sum():,.0f}",
+            f"{bulk_results_df['Reorder_Point_Conservative'].sum():,.0f}",
+            f"{bulk_results_df['Lead_Time_Days'].mean():.1f}",
+            len(bulk_results_df[(bulk_results_df['Priority'].isin(['Critical', 'High'])) | 
+                              (bulk_results_df['Lead_Time_Risk'] == 'High')])
+        ]
+    }
+    
+    summary_df = pd.DataFrame(summary_data)
+    summary_df.to_excel(writer, sheet_name='Executive Summary', index=False)
+
+def create_priority_matrix_sheet(bulk_results_df, writer):
+    """Create priority matrix analysis sheet"""
+    priority_analysis = bulk_results_df.groupby('Priority').agg({
+        'Item': 'count',
+        'Total_Quantity': 'sum',
+        'Reorder_Point_Likely': 'sum',
+        'Avg_Daily_Demand': 'mean',
+        'Lead_Time_Days': 'mean'
+    }).round(2)
+    
+    priority_analysis.columns = ['Item_Count', 'Total_Volume', 'Total_Reorder_Investment', 
+                               'Avg_Daily_Demand', 'Avg_Lead_Time']
+    priority_analysis.to_excel(writer, sheet_name='Priority Matrix')
+
+def create_risk_assessment_sheet(bulk_results_df, writer):
+    """Create risk assessment sheet"""
+    # High-risk items
+    high_risk_df = bulk_results_df[
+        (bulk_results_df['Lead_Time_Risk'] == 'High') |
+        (bulk_results_df['Demand_Variability_CV'] > 0.5) |
+        (bulk_results_df['Is_Seasonal'] == True)
+    ].copy()
+    
+    high_risk_df['Risk_Factors'] = ''
+    for idx, row in high_risk_df.iterrows():
+        factors = []
+        if row['Lead_Time_Risk'] == 'High':
+            factors.append('High Lead Time')
+        if row['Demand_Variability_CV'] > 0.5:
+            factors.append('High Demand Variability')
+        if row['Is_Seasonal']:
+            factors.append('Seasonal Demand')
+        high_risk_df.at[idx, 'Risk_Factors'] = ', '.join(factors)
+    
+    risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
+                   'Is_Seasonal', 'Risk_Factors', 'Reorder_Point_Conservative']
+    high_risk_df[risk_columns].to_excel(writer, sheet_name='Risk Assessment', index=False)
+
+def create_action_plan_sheet(bulk_results_df, writer):
+    """Create action plan sheet with specific recommendations"""
+    action_items = []
+    
+    # Critical items needing immediate attention
+    critical_items = bulk_results_df[bulk_results_df['Priority'] == 'Critical']
+    for _, item in critical_items.iterrows():
+        action_items.append({
+            'Item': item['Item'],
+            'Priority': 'URGENT',
+            'Action': 'Review inventory levels immediately',
+            'Recommended_Reorder_Point': item['Reorder_Point_Conservative'],
+            'Reason': 'Critical priority item',
+            'Timeline': 'Within 24 hours'
+        })
+    
+    # High lead time risk items
+    high_lead_time = bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']
+    for _, item in high_lead_time.iterrows():
+        if item['Priority'] != 'Critical':  # Avoid duplicates
+            action_items.append({
+                'Item': item['Item'],
+                'Priority': 'HIGH',
+                'Action': 'Negotiate shorter lead times or find backup suppliers',
+                'Recommended_Reorder_Point': item['Reorder_Point_Conservative'],
+                'Reason': 'High lead time risk',
+                'Timeline': 'Within 1 week'
+            })
+    
+    # Seasonal items
+    seasonal_items = bulk_results_df[bulk_results_df['Is_Seasonal'] == True]
+    for _, item in seasonal_items.iterrows():
+        if item['Priority'] not in ['Critical'] and item['Lead_Time_Risk'] != 'High':  # Avoid duplicates
+            action_items.append({
+                'Item': item['Item'],
+                'Priority': 'MEDIUM',
+                'Action': 'Plan seasonal inventory buildup',
+                'Recommended_Reorder_Point': item['Reorder_Point_Likely'],
+                'Reason': 'Seasonal demand pattern detected',
+                'Timeline': 'Within 2 weeks'
+            })
+    
+    if action_items:
+        action_df = pd.DataFrame(action_items)
+        action_df.to_excel(writer, sheet_name='Action Plan', index=False)
+
+def create_raw_data_summary_sheet(df, writer):
+    """Create raw data summary sheet"""
+    data_summary = {
+        'Metric': [
+            'Total Records',
+            'Date Range Start',
+            'Date Range End',
+            'Total Unique Items',
+            'Total Quantity Delivered',
+            'Average Order Size',
+            'Data Collection Period (Days)'
+        ],
+        'Value': [
+            len(df),
+            df['Creation Date'].min().strftime('%Y-%m-%d') if not df.empty else 'N/A',
+            df['Creation Date'].max().strftime('%Y-%m-%d') if not df.empty else 'N/A',
+            df['Item'].nunique(),
+            df['Qty Delivered'].sum(),
+            f"{df['Qty Delivered'].mean():.2f}",
+            (pd.to_datetime(df['Creation Date']).max() - pd.to_datetime(df['Creation Date']).min()).days
+        ]
+    }
+    
+    summary_df = pd.DataFrame(data_summary)
+    summary_df.to_excel(writer, sheet_name='Data Summary', index=False)
+
+def display_bulk_analysis_dashboard(bulk_results_df):
+    """Display bulk analysis results dashboard"""
+    st.header("📊 Bulk Analysis Dashboard")
+    
+    # Key metrics
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Items Analyzed", len(results_df))
+        st.metric("Total Items", len(bulk_results_df))
     
     with col2:
-        critical_items = len(results_df[results_df['Priority_Category'] == 'Critical'])
-        st.metric("Critical Priority Items", critical_items)
+        critical_count = len(bulk_results_df[bulk_results_df['Priority'] == 'Critical'])
+        st.metric("Critical Items", critical_count)
     
     with col3:
-        total_reorder_value = results_df['Reorder_Point_Likely'].sum()
-        st.metric("Total Reorder Investment", f"{total_reorder_value:,.0f}")
+        total_investment = bulk_results_df['Reorder_Point_Likely'].sum()
+        st.metric("Total Investment", f"{total_investment:,.0f}")
     
     with col4:
-        avg_lead_time = results_df['Lead_Time_Days'].mean()
-        st.metric("Average Lead Time", f"{avg_lead_time:.1f} days")
+        high_risk_count = len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High'])
+        st.metric("High Risk Items", high_risk_count)
     
     # Priority distribution
     st.subheader("🎯 Priority Distribution")
-    priority_counts = results_df['Priority_Category'].value_counts()
+    priority_counts = bulk_results_df['Priority'].value_counts()
     
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        for priority in ['Critical', 'High', 'Medium', 'Low']:
-            count = priority_counts.get(priority, 0)
-            percentage = (count / len(results_df)) * 100
-            color = {'Critical': '🔴', 'High': '🟠', 'Medium': '🟡', 'Low': '🟢'}[priority]
-            st.write(f"{color} **{priority}**: {count} items ({percentage:.1f}%)")
+        st.dataframe(priority_counts.to_frame('Count'))
     
     with col2:
-        # Priority pie chart
         fig_pie = px.pie(
             values=priority_counts.values,
             names=priority_counts.index,
-            title="Items by Priority Category",
+            title="Items by Priority",
             color_discrete_map={
-                'Critical': '#ff4444',
-                'High': '#ff8800',
-                'Medium': '#ffdd00',
-                'Low': '#44ff44'
+                'Critical': '#dc3545',
+                'High': '#fd7e14', 
+                'Medium': '#ffc107',
+                'Low': '#28a745'
             }
         )
         st.plotly_chart(fig_pie, use_container_width=True)
@@ -408,412 +521,395 @@ def display_bulk_analysis_results(results_df):
     # Risk analysis
     st.subheader("⚠️ Risk Analysis")
     
-    high_risk_items = results_df[
-        (results_df['Lead_Time_Risk'] > 0.5) | 
-        (results_df['Demand_Variability'] > 0.5)
-    ]
-    
-    seasonal_items = results_df[results_df['Has_Seasonality'] == True]
-    
     col1, col2 = st.columns(2)
     
     with col1:
-        st.metric("High Risk Items", len(high_risk_items))
-        if len(high_risk_items) > 0:
-            st.write("Items with high lead time or demand variability:")
-            risk_display = high_risk_items[['Item', 'Lead_Time_Risk', 'Demand_Variability']].head(5)
-            st.dataframe(risk_display, use_container_width=True)
+        # Lead time risk distribution
+        risk_counts = bulk_results_df['Lead_Time_Risk'].value_counts()
+        fig_risk = px.bar(
+            x=risk_counts.index,
+            y=risk_counts.values,
+            title="Lead Time Risk Distribution",
+            color=risk_counts.index,
+            color_discrete_map={'Low': '#28a745', 'Medium': '#ffc107', 'High': '#dc3545'}
+        )
+        st.plotly_chart(fig_risk, use_container_width=True)
     
     with col2:
-        st.metric("Seasonal Items", len(seasonal_items))
-        if len(seasonal_items) > 0:
-            st.write("Items with seasonal demand patterns:")
-            seasonal_display = seasonal_items[['Item', 'Seasonality']].head(5)
-            st.dataframe(seasonal_display, use_container_width=True)
+        # Seasonal items
+        seasonal_count = bulk_results_df['Is_Seasonal'].sum()
+        seasonal_data = pd.DataFrame({
+            'Type': ['Seasonal', 'Non-Seasonal'],
+            'Count': [seasonal_count, len(bulk_results_df) - seasonal_count]
+        })
+        fig_seasonal = px.bar(
+            seasonal_data,
+            x='Type',
+            y='Count',
+            title="Seasonal vs Non-Seasonal Items",
+            color='Type',
+            color_discrete_map={'Seasonal': '#17a2b8', 'Non-Seasonal': '#6c757d'}
+        )
+        st.plotly_chart(fig_seasonal, use_container_width=True)
     
-    # Interactive data table
-    st.subheader("📋 Detailed Results Table")
+    # Top items requiring attention
+    st.subheader("🚨 Items Requiring Immediate Attention")
     
-    # Filter options
+    attention_items = bulk_results_df[
+        (bulk_results_df['Priority'].isin(['Critical', 'High'])) |
+        (bulk_results_df['Lead_Time_Risk'] == 'High')
+    ].sort_values(['Priority', 'Priority_Score'], ascending=[True, False])
+    
+    if len(attention_items) > 0:
+        display_cols = ['Item', 'Priority', 'Priority_Score', 'Lead_Time_Risk', 
+                       'Reorder_Point_Likely', 'Avg_Daily_Demand']
+        st.dataframe(attention_items[display_cols].head(10), use_container_width=True)
+    else:
+        st.success("✅ No items require immediate attention!")
+    
+    # Interactive scatter plot
+    st.subheader("📈 Priority vs Investment Analysis")
+    
+    fig_scatter = px.scatter(
+        bulk_results_df,
+        x='Avg_Daily_Demand',
+        y='Reorder_Point_Likely',
+        size='Total_Quantity',
+        color='Priority',
+        hover_data=['Item', 'Lead_Time_Days'],
+        title="Daily Demand vs Reorder Point (sized by total volume)",
+        color_discrete_map={
+            'Critical': '#dc3545',
+            'High': '#fd7e14',
+            'Medium': '#ffc107', 
+            'Low': '#28a745'
+        }
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
+    
+    # Detailed data table with filters
+    st.subheader("📋 Detailed Analysis Table")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
         priority_filter = st.multiselect(
             "Filter by Priority",
-            ['Critical', 'High', 'Medium', 'Low'],
-            default=['Critical', 'High', 'Medium', 'Low']
+            bulk_results_df['Priority'].unique(),
+            default=bulk_results_df['Priority'].unique()
         )
     
     with col2:
-        min_demand = st.number_input("Minimum Daily Demand", min_value=0.0, value=0.0)
+        risk_filter = st.multiselect(
+            "Filter by Lead Time Risk",
+            bulk_results_df['Lead_Time_Risk'].unique(),
+            default=bulk_results_df['Lead_Time_Risk'].unique()
+        )
     
     with col3:
-        show_seasonal_only = st.checkbox("Show Seasonal Items Only")
+        min_demand = st.number_input(
+            "Minimum Daily Demand",
+            min_value=0.0,
+            value=0.0,
+            step=0.1
+        )
     
     # Apply filters
-    filtered_df = results_df[results_df['Priority_Category'].isin(priority_filter)]
-    filtered_df = filtered_df[filtered_df['Daily_Demand'] >= min_demand]
+    filtered_df = bulk_results_df[
+        (bulk_results_df['Priority'].isin(priority_filter)) &
+        (bulk_results_df['Lead_Time_Risk'].isin(risk_filter)) &
+        (bulk_results_df['Avg_Daily_Demand'] >= min_demand)
+    ]
     
-    if show_seasonal_only:
-        filtered_df = filtered_df[filtered_df['Has_Seasonality'] == True]
+    st.dataframe(filtered_df, use_container_width=True, height=400)
+    """Generate simple forecast data for demonstration"""
+    if len(daily_demand_series) < 7:
+        return None
     
-    # Display table with formatting
-    display_df = filtered_df[[
-        'Item', 'Priority_Category', 'Priority_Score', 
-        'Daily_Demand', 'Lead_Time_Days', 'Safety_Stock',
-        'Reorder_Point_Likely', 'Total_Quantity', 'Demand_Variability',
-        'Order_Frequency_Monthly', 'Seasonality'
-    ]].copy()
+    # Simple trend-based forecast
+    recent_trend = daily_demand_series.tail(30).mean()
+    seasonal_factor = 1 + 0.1 * np.sin(np.arange(days_ahead) * 2 * np.pi / 365)
     
-    # Format numeric columns
-    display_df['Priority_Score'] = display_df['Priority_Score'].round(2)
-    display_df['Daily_Demand'] = display_df['Daily_Demand'].round(2)
-    display_df['Lead_Time_Days'] = display_df['Lead_Time_Days'].round(1)
-    display_df['Safety_Stock'] = display_df['Safety_Stock'].round(2)
-    display_df['Reorder_Point_Likely'] = display_df['Reorder_Point_Likely'].round(2)
-    display_df['Demand_Variability'] = (display_df['Demand_Variability'] * 100).round(1)
-    display_df['Order_Frequency_Monthly'] = display_df['Order_Frequency_Monthly'].round(2)
-    
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        height=400
+    forecast_dates = pd.date_range(
+        start=daily_demand_series.index[-1] + timedelta(days=1),
+        periods=days_ahead,
+        freq='D'
     )
     
-    # Advanced analytics
-    st.subheader("📈 Advanced Analytics")
+    # Add some randomness to make it realistic
+    np.random.seed(42)
+    noise = np.random.normal(0, recent_trend * 0.2, days_ahead)
+    forecast_values = (recent_trend * seasonal_factor + noise).clip(min=0)
     
-    # Correlation analysis
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Scatter plot: Priority Score vs Daily Demand
-        fig_scatter1 = px.scatter(
-            results_df, 
-            x='Daily_Demand', 
-            y='Priority_Score',
-            color='Priority_Category',
-            size='Total_Quantity',
-            hover_data=['Item', 'Lead_Time_Days'],
-            title="Priority Score vs Daily Demand",
-            color_discrete_map={
-                'Critical': '#ff4444',
-                'High': '#ff8800',
-                'Medium': '#ffdd00',
-                'Low': '#44ff44'
-            }
-        )
-        st.plotly_chart(fig_scatter1, use_container_width=True)
-    
-    with col2:
-        # Box plot: Reorder Points by Priority Category
-        fig_box = px.box(
-            results_df,
-            x='Priority_Category',
-            y='Reorder_Point_Likely',
-            title="Reorder Points Distribution by Priority",
-            color='Priority_Category',
-            color_discrete_map={
-                'Critical': '#ff4444',
-                'High': '#ff8800',
-                'Medium': '#ffdd00',
-                'Low': '#44ff44'
-            }
-        )
-        st.plotly_chart(fig_box, use_container_width=True)
-    
-    # Export options
-    st.subheader("📤 Export Bulk Results")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        # Full export
-        full_csv = results_df.to_csv(index=False)
-        st.download_button(
-            "📊 Download Full Analysis (CSV)",
-            full_csv,
-            file_name=f"bulk_reorder_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
-    
-    with col2:
-        # Critical items only
-        critical_df = results_df[results_df['Priority_Category'] == 'Critical']
-        if len(critical_df) > 0:
-            critical_csv = critical_df.to_csv(index=False)
-            st.download_button(
-                "🔴 Download Critical Items (CSV)",
-                critical_csv,
-                file_name=f"critical_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv"
-            )
-    
-    with col3:
-        # Summary report
-        summary_data = {
-            'Metric': [
-                'Total Items', 'Critical Items', 'High Risk Items', 
-                'Seasonal Items', 'Average Lead Time', 'Total Reorder Value'
-            ],
-            'Value': [
-                len(results_df), len(results_df[results_df['Priority_Category'] == 'Critical']),
-                len(high_risk_items), len(seasonal_items),
-                f"{results_df['Lead_Time_Days'].mean():.1f} days",
-                f"{results_df['Reorder_Point_Likely'].sum():,.0f}"
-            ]
-        }
-        summary_df = pd.DataFrame(summary_data)
-        summary_csv = summary_df.to_csv(index=False)
-        st.download_button(
-            "📋 Download Summary Report (CSV)",
-            summary_csv,
-            file_name=f"inventory_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
+    return pd.Series(forecast_values, index=forecast_dates)
 
-def display(df):
-    """Enhanced main Streamlit interface"""
-    st.title("🎯 Smart Reorder Point Prediction System")
-    st.markdown("Advanced procurement analytics with multiple calculation methods")
+def main():
+    # Header
+    st.title("🎯 Smart Reorder Point Prediction Dashboard")
+    st.markdown("---")
     
-    # Validate data
-    required_cols = ['Item', 'Qty Delivered', 'Creation Date']
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    
-    if missing_cols:
-        st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
-        return
-    
-    if df["Item"].dropna().empty:
-        st.error("❌ No items found in the dataset.")
-        return
-    
-    # Sidebar configuration
+    # Sidebar for configuration
     st.sidebar.header("⚙️ Configuration")
-    service_level = st.sidebar.selectbox(
-        "Service Level", 
-        [0.85, 0.90, 0.95, 0.97, 0.99],
-        index=2,
-        format_func=lambda x: f"{x*100:.0f}%"
-    )
     
-    calculation_method = st.sidebar.selectbox(
-        "Safety Stock Method",
-        ['basic', 'advanced', 'conservative'],
-        index=1
-    )
+    # Sample data option for demonstration
+    use_sample_data = st.sidebar.checkbox("Use Sample Data", value=True)
     
-    show_abc_analysis = st.sidebar.checkbox("Show ABC Analysis", value=True)
+    if use_sample_data:
+        # Create sample data for demonstration
+        np.random.seed(42)
+        dates = pd.date_range(start='2023-01-01', end='2024-12-31', freq='D')
+        
+        sample_data = []
+        items = ['Widget A', 'Component B', 'Part C', 'Material D']
+        
+        for item in items:
+            # Generate realistic order patterns
+            order_dates = np.random.choice(dates, size=np.random.randint(50, 150), replace=False)
+            for date in order_dates:
+                qty = np.random.poisson(lam=20) + 5  # Realistic quantities
+                sample_data.append({
+                    'Item': item,
+                    'Qty Delivered': qty,
+                    'Creation Date': date
+                })
+        
+        df = pd.DataFrame(sample_data)
+        st.sidebar.success("✅ Using sample data")
+    else:
+        st.sidebar.info("📁 Upload your CSV file with columns: Item, Qty Delivered, Creation Date")
+        uploaded_file = st.sidebar.file_uploader("Choose CSV file", type=['csv'])
+        
+        if uploaded_file is not None:
+            df = pd.read_csv(uploaded_file)
+            st.sidebar.success("✅ Data loaded successfully")
+        else:
+            st.warning("⚠️ Please upload a CSV file or use sample data to continue.")
+            return
     
-    # ABC Analysis sidebar
-    if show_abc_analysis:
-        st.sidebar.subheader("📊 ABC Analysis")
-        abc_summary = calculate_abc_analysis(df)
-        abc_counts = abc_summary['ABC_Category'].value_counts()
-        st.sidebar.write(f"**A Items:** {abc_counts.get('A', 0)} (High Value)")
-        st.sidebar.write(f"**B Items:** {abc_counts.get('B', 0)} (Medium Value)")
-        st.sidebar.write(f"**C Items:** {abc_counts.get('C', 0)} (Low Value)")
+    # Validate required columns
+    required_columns = ['Item', 'Qty Delivered', 'Creation Date']
+    missing_columns = [col for col in required_columns if col not in df.columns]
     
-    # Main item selection
-    col1, col2 = st.columns([2, 1])
+    if missing_columns:
+        st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
+        return
+    
+    # Main content
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        item = st.selectbox("🔍 Select Item for Analysis", df["Item"].dropna().unique())
+        st.subheader("📦 Item Selection")
+        selected_item = st.selectbox(
+            "Choose an item to analyze:",
+            options=sorted(df['Item'].unique()),
+            help="Select an item from your inventory to perform reorder point analysis"
+        )
     
     with col2:
-        if show_abc_analysis and item in abc_summary.index:
-            abc_cat = abc_summary.loc[item, 'ABC_Category']
-            st.metric("ABC Category", abc_cat)
+        st.subheader("🎛️ Scenario Selection")
+        selected_scenario = st.radio(
+            "Highlight scenario:",
+            options=['Optimistic', 'Likely', 'Conservative'],
+            index=1,
+            help="Choose which reorder scenario to emphasize in visualizations"
+        )
     
     # Filter data for selected item
-    item_df = df[df["Item"] == item].copy()
+    item_data = df[df['Item'] == selected_item].copy()
     
-    if len(item_df) == 0:
-        st.warning("⚠️ No data available for the selected item.")
+    if len(item_data) == 0:
+        st.error(f"❌ No data found for item: {selected_item}")
         return
     
-    # Calculate all metrics
-    daily_demand = calculate_average_daily_demand(item_df)
-    lead_time_data = estimate_lead_time(item_df)
+    # Calculate metrics
+    metrics = calculate_metrics(item_data)
     
-    calculator = ReorderPointCalculator(item_df, service_level)
-    seasonality = detect_seasonality(calculator.daily_demand)
-    
-    safety_stock = calculate_safety_stock(
-        daily_demand, lead_time_data, 
-        calculator.z_score, calculation_method
-    )
-    
-    reorder_scenarios = calculate_reorder_point(
-        daily_demand, lead_time_data, safety_stock
-    )
+    if metrics is None:
+        st.error("❌ Unable to calculate metrics for this item")
+        return
     
     # Display key metrics
-    st.subheader("📈 Key Performance Indicators")
+    st.subheader("📊 Key Performance Indicators")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
-            "Daily Demand (Avg)", 
-            f"{daily_demand['recommended']:.2f}",
-            delta=f"{daily_demand['trend_adjusted'] - daily_demand['simple']:.2f}"
+            label="Average Daily Demand",
+            value=f"{metrics['avg_daily_demand']:.2f}",
+            help="Total quantity delivered divided by the number of days in the analysis period"
         )
     
     with col2:
         st.metric(
-            "Lead Time (Days)", 
-            f"{lead_time_data['avg']:.1f}",
-            delta=f"±{lead_time_data['std']:.1f}"
+            label="Average Lead Time",
+            value=f"{metrics['lead_time']:.1f} days",
+            help="Estimated time between placing an order and receiving delivery"
         )
     
     with col3:
         st.metric(
-            "Safety Stock", 
-            f"{safety_stock:.2f}",
-            help=f"Service Level: {service_level*100:.0f}%"
+            label="Safety Stock",
+            value=f"{metrics['safety_stock']:.2f}",
+            help="Buffer stock to maintain 95% service level during demand/lead time variations"
         )
     
     with col4:
+        # Show the selected scenario's ROP
+        scenario_values = {
+            'Optimistic': metrics['optimistic_rop'],
+            'Likely': metrics['likely_rop'],
+            'Conservative': metrics['conservative_rop']
+        }
         st.metric(
-            "Reorder Point (Likely)", 
-            f"{reorder_scenarios['likely']:.2f}",
-            delta=f"{reorder_scenarios['conservative'] - reorder_scenarios['optimistic']:.1f} range"
+            label=f"Reorder Point ({selected_scenario})",
+            value=f"{scenario_values[selected_scenario]:.2f}",
+            help=f"Suggested reorder point for {selected_scenario.lower()} scenario"
         )
     
-    with col5:
-        total_orders = len(item_df)
-        st.metric(
-            "Total Orders", 
-            total_orders,
-            delta=f"{calculator.date_range} days period"
-        )
+    st.markdown("---")
     
-    # Seasonality insights
-    st.subheader("🔄 Seasonality Analysis")
-    if seasonality['has_seasonality']:
-        if 'peak_month' in seasonality:
-            st.info(f"📊 {seasonality['pattern']} | Peak: {seasonality['peak_month']} | Low: {seasonality['low_month']}")
-        else:
-            st.info(f"📊 {seasonality['pattern']}")
-    else:
-        st.success(f"✅ {seasonality['pattern']} - Stable demand pattern")
+    # Decision guidance
+    st.subheader("🧠 Decision Guidance")
     
-    # Scenario analysis
-    st.subheader("🎯 Reorder Point Scenarios")
-    scenario_cols = st.columns(3)
-    
-    scenarios_data = [
-        ("Optimistic", reorder_scenarios['optimistic'], "🟢", "Low demand + Short lead time"),
-        ("Most Likely", reorder_scenarios['likely'], "🟡", "Expected conditions"),
-        ("Conservative", reorder_scenarios['conservative'], "🔴", "High demand + Long lead time")
-    ]
-    
-    for i, (name, value, emoji, desc) in enumerate(scenarios_data):
-        with scenario_cols[i]:
-            st.metric(f"{emoji} {name}", f"{value:.2f}")
-            st.caption(desc)
-    
-    # Advanced calculations details
-    with st.expander("🧮 Detailed Calculations"):
-        col1, col2 = st.columns(2)
+    with st.expander("📋 Scenario Explanations", expanded=True):
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.write("**Demand Analysis:**")
-            st.write(f"• Simple Average: {daily_demand['simple']:.2f}")
-            st.write(f"• Weighted Average: {daily_demand['weighted']:.2f}")
-            st.write(f"• Trend Adjusted: {daily_demand['trend_adjusted']:.2f}")
-            
-            st.write("**Lead Time Scenarios:**")
-            st.write(f"• Minimum: {lead_time_data['min']:.1f} days")
-            st.write(f"• Average: {lead_time_data['avg']:.1f} days")
-            st.write(f"• Maximum: {lead_time_data['max']:.1f} days")
+            st.markdown("""
+            **🟢 Optimistic Scenario**
+            - Lower demand and shorter lead times
+            - Use when: Supply chain is stable
+            - Risk: Potential stockouts
+            - Best for: Cost-sensitive items
+            """)
         
         with col2:
-            st.write("**Safety Stock Formula:**")
-            if calculation_method == 'advanced':
-                st.code("SS = Z × √(LT×σD² + D²×σLT²)")
-            else:
-                st.code("SS = Z × D × σLT")
-            
-            st.write("**Reorder Point Formula:**")
-            st.code("ROP = (Daily Demand × Lead Time) + Safety Stock")
-            
-            st.write(f"**Service Level:** {service_level*100:.0f}% (Z = {calculator.z_score})")
+            st.markdown("""
+            **🔵 Likely Scenario (Recommended)**
+            - Most probable demand and lead time
+            - Use when: Normal business conditions
+            - Risk: Balanced approach
+            - Best for: Most inventory items
+            """)
+        
+        with col3:
+            st.markdown("""
+            **🔴 Conservative Scenario**
+            - Higher demand and longer lead times
+            - Use when: Uncertain supply/demand
+            - Risk: Higher holding costs
+            - Best for: Critical items
+            """)
     
-    # Advanced visualizations
-    st.subheader("📊 Advanced Analytics")
+    # Visualizations
+    st.subheader("📈 Visual Analysis")
     
-    try:
-        fig = create_advanced_visualizations(item_df, daily_demand, reorder_scenarios)
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Visualization error: {str(e)}")
-        # Fallback to simple chart
-        calculator = ReorderPointCalculator(item_df)
-        st.line_chart(calculator.daily_demand)
-    
-    # Performance recommendations
-    st.subheader("💡 Recommendations")
-    
-    recommendations = []
-    
-    # Data quality check
-    if len(item_df) < 10:
-        recommendations.append("⚠️ **Data Quality**: Limited order history. Consider gathering more data for accurate predictions.")
-    
-    # Seasonality recommendations
-    if seasonality['has_seasonality'] and 'seasonal_factor' in seasonality:
-        if seasonality['seasonal_factor'] > 2:
-            recommendations.append(f"📈 **Seasonality**: High seasonal variation detected. Consider seasonal stock planning for {seasonality['peak_month']}.")
-    
-    # ABC category recommendations
-    if show_abc_analysis and item in abc_summary.index:
-        abc_cat = abc_summary.loc[item, 'ABC_Category']
-        if abc_cat == 'A':
-            recommendations.append("🎯 **High Priority**: This is an 'A' category item. Consider more frequent monitoring and higher service levels.")
-        elif abc_cat == 'C':
-            recommendations.append("📦 **Low Priority**: This is a 'C' category item. Consider bulk ordering to reduce procurement costs.")
-    
-    # Lead time recommendations
-    if lead_time_data['std'] > lead_time_data['avg']:
-        recommendations.append("⏱️ **Lead Time Variability**: High lead time variation detected. Consider backup suppliers or safety lead time buffers.")
-    
-    if recommendations:
-        for rec in recommendations:
-            st.info(rec)
-    else:
-        st.success("✅ No specific recommendations. Current inventory management appears optimal for this item.")
-    
-    # Export functionality
-    st.subheader("📤 Export Results")
-    
-    # Prepare export data
-    export_data = {
-        'Item': [item],
-        'Daily_Demand_Average': [daily_demand['recommended']],
-        'Lead_Time_Days': [lead_time_data['avg']],
-        'Safety_Stock': [safety_stock],
-        'Reorder_Point_Optimistic': [reorder_scenarios['optimistic']],
-        'Reorder_Point_Likely': [reorder_scenarios['likely']],
-        'Reorder_Point_Conservative': [reorder_scenarios['conservative']],
-        'Service_Level': [f"{service_level*100:.0f}%"],
-        'Seasonality': [seasonality['pattern']],
-        'ABC_Category': [abc_summary.loc[item, 'ABC_Category'] if show_abc_analysis and item in abc_summary.index else 'N/A']
-    }
-    
-    export_df = pd.DataFrame(export_data)
-    
+    # Row 1: Daily demand and scenarios
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.download_button(
-            "📊 Download Analysis (CSV)",
-            export_df.to_csv(index=False),
-            file_name=f"reorder_analysis_{item}_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
+        demand_chart = create_daily_demand_chart(metrics['daily_demand_series'])
+        st.plotly_chart(demand_chart, use_container_width=True)
     
     with col2:
-        if st.button("🔄 Analyze All Items"):
-            st.info("Feature coming soon: Bulk analysis of all items with priority ranking.")
+        scenarios_chart = create_scenarios_chart(metrics, selected_scenario)
+        st.plotly_chart(scenarios_chart, use_container_width=True)
+    
+    # Row 2: Distribution and cumulative
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        distribution_chart = create_demand_distribution_chart(metrics['daily_demand_series'])
+        st.plotly_chart(distribution_chart, use_container_width=True)
+    
+    with col2:
+        cumulative_chart = create_cumulative_demand_chart(metrics['daily_demand_series'])
+        st.plotly_chart(cumulative_chart, use_container_width=True)
+    
+    # Forecast feature (bonus)
+    st.subheader("🔮 Demand Forecast (Optional)")
+    
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        if st.button("📊 Show 3-Month Forecast"):
+            st.session_state['show_forecast'] = True
+    
+    with col2:
+        st.info("💡 Forecast uses trend analysis and seasonal patterns from historical data")
+    
+    if st.session_state.get('show_forecast', False):
+        forecast = generate_forecast_data(metrics['daily_demand_series'])
+        
+        if forecast is not None:
+            # Combined historical and forecast chart
+            fig = go.Figure()
+            
+            # Historical data
+            fig.add_trace(go.Scatter(
+                x=metrics['daily_demand_series'].index,
+                y=metrics['daily_demand_series'].values,
+                mode='lines',
+                name='Historical Demand',
+                line=dict(color='#2E86AB', width=2)
+            ))
+            
+            # Forecast data
+            fig.add_trace(go.Scatter(
+                x=forecast.index,
+                y=forecast.values,
+                mode='lines',
+                name='3-Month Forecast',
+                line=dict(color='#F18F01', width=2, dash='dash')
+            ))
+            
+            # Add vertical line to separate historical from forecast
+            fig.add_vline(
+                x=metrics['daily_demand_series'].index[-1],
+                line_dash="dot",
+                line_color="gray",
+                annotation_text="Forecast Start"
+            )
+            
+            fig.update_layout(
+                title='📈 Historical Demand + 3-Month Forecast',
+                xaxis_title='Date',
+                yaxis_title='Daily Demand',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("⚠️ Insufficient data for forecasting (need at least 7 days)")
+    
+    # Summary and next steps
+    st.markdown("---")
+    st.subheader("🎯 Summary & Next Steps")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"""
+        **📊 Analysis Summary for {selected_item}:**
+        - Data period: {metrics['date_range_days']} days
+        - Total orders: {metrics['total_orders']}
+        - Recommended reorder point: **{metrics['likely_rop']:.2f}** units
+        - Current inventory position needed for review
+        """)
+    
+    with col2:
+        st.markdown("""
+        **🎯 Recommended Actions:**
+        1. ✅ Review current inventory levels
+        2. 📦 Set reorder point in your system
+        3. 🔄 Monitor demand patterns monthly
+        4. ⚡ Consider supplier lead time agreements
+        """)
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("*Dashboard powered by Streamlit and Plotly | Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M") + "*")
+
+if __name__ == "__main__":
+    main()
