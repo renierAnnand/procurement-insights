@@ -7,14 +7,6 @@ from datetime import datetime, timedelta
 import warnings
 import io
 
-# Configure Streamlit page - MUST BE FIRST STREAMLIT COMMAND
-st.set_page_config(
-    page_title="Smart Reorder Point Prediction",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # Try to import openpyxl for Excel functionality
 try:
     from openpyxl import Workbook
@@ -25,14 +17,6 @@ except ImportError:
     EXCEL_AVAILABLE = False
 
 warnings.filterwarnings('ignore')
-
-# Configure Streamlit page
-st.set_page_config(
-    page_title="Smart Reorder Point Prediction",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 def calculate_metrics(item_df):
     """Calculate all reorder point metrics for a given item"""
@@ -89,153 +73,6 @@ def calculate_metrics(item_df):
         'total_orders': len(item_df),
         'date_range_days': total_days
     }
-
-def create_daily_demand_chart(daily_demand_series):
-    """Create enhanced daily demand trend chart"""
-    fig = go.Figure()
-    
-    # Add daily demand line
-    fig.add_trace(go.Scatter(
-        x=daily_demand_series.index,
-        y=daily_demand_series.values,
-        mode='lines+markers',
-        name='Daily Demand',
-        line=dict(color='#2E86AB', width=2),
-        marker=dict(size=4),
-        hovertemplate='<b>Date:</b> %{x}<br><b>Demand:</b> %{y}<extra></extra>'
-    ))
-    
-    # Add 7-day moving average if enough data
-    if len(daily_demand_series) >= 7:
-        ma_7 = daily_demand_series.rolling(window=7, center=True).mean()
-        fig.add_trace(go.Scatter(
-            x=ma_7.index,
-            y=ma_7.values,
-            mode='lines',
-            name='7-Day Moving Average',
-            line=dict(color='#F18F01', width=3),
-            hovertemplate='<b>Date:</b> %{x}<br><b>7-Day Avg:</b> %{y:.2f}<extra></extra>'
-        ))
-    
-    fig.update_layout(
-        title='📈 Daily Demand Trend Analysis',
-        xaxis_title='Date',
-        yaxis_title='Quantity Demanded',
-        hovermode='x unified',
-        showlegend=True,
-        height=400
-    )
-    
-    return fig
-
-def create_scenarios_chart(scenarios, selected_scenario=None):
-    """Create reorder point scenarios bar chart"""
-    scenario_data = {
-        'Scenario': ['Optimistic', 'Likely', 'Conservative'],
-        'Reorder Point': [scenarios['optimistic_rop'], scenarios['likely_rop'], scenarios['conservative_rop']],
-        'Colors': ['#28a745', '#007bff', '#dc3545']  # Green, Blue, Red
-    }
-    
-    fig = go.Figure()
-    
-    for i, (scenario, value, color) in enumerate(zip(scenario_data['Scenario'], scenario_data['Reorder Point'], scenario_data['Colors'])):
-        # Highlight selected scenario
-        opacity = 1.0 if selected_scenario is None or selected_scenario == scenario else 0.6
-        border_width = 3 if selected_scenario == scenario else 0
-        
-        fig.add_trace(go.Bar(
-            x=[scenario],
-            y=[value],
-            name=scenario,
-            marker=dict(
-                color=color,
-                opacity=opacity,
-                line=dict(width=border_width, color='black')
-            ),
-            text=f'{value:.1f}',
-            textposition='auto',
-            hovertemplate=f'<b>{scenario}</b><br>Reorder Point: %{{y:.2f}}<extra></extra>'
-        ))
-    
-    fig.update_layout(
-        title='🎯 Reorder Point Scenarios Comparison',
-        xaxis_title='Scenario Type',
-        yaxis_title='Reorder Point Quantity',
-        showlegend=False,
-        height=400
-    )
-    
-    return fig
-
-def create_demand_distribution_chart(daily_demand_series):
-    """Create demand distribution histogram"""
-    # Remove zero values for better distribution visualization
-    non_zero_demand = daily_demand_series[daily_demand_series > 0]
-    
-    if len(non_zero_demand) == 0:
-        # Handle case with no demand
-        fig = go.Figure()
-        fig.add_annotation(
-            text="No demand data available for distribution analysis",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False
-        )
-    else:
-        fig = go.Figure()
-        
-        fig.add_trace(go.Histogram(
-            x=non_zero_demand.values,
-            nbinsx=min(20, len(non_zero_demand.unique())),
-            name='Demand Distribution',
-            marker_color='#A23B72',
-            opacity=0.7,
-            hovertemplate='<b>Demand Range:</b> %{x}<br><b>Frequency:</b> %{y}<extra></extra>'
-        ))
-        
-        # Add mean line
-        mean_demand = non_zero_demand.mean()
-        fig.add_vline(
-            x=mean_demand,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"Mean: {mean_demand:.2f}",
-            annotation_position="top right"
-        )
-    
-    fig.update_layout(
-        title='📊 Demand Distribution Analysis',
-        xaxis_title='Daily Demand Quantity',
-        yaxis_title='Frequency (Days)',
-        height=400
-    )
-    
-    return fig
-
-def create_cumulative_demand_chart(daily_demand_series):
-    """Create cumulative demand chart"""
-    cumulative_demand = daily_demand_series.cumsum()
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=cumulative_demand.index,
-        y=cumulative_demand.values,
-        mode='lines',
-        name='Cumulative Demand',
-        line=dict(color='#9B59B6', width=3),
-        fill='tonexty',
-        fillcolor='rgba(155, 89, 182, 0.3)',
-        hovertemplate='<b>Date:</b> %{x}<br><b>Cumulative Demand:</b> %{y}<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title='📈 Cumulative Demand Over Time',
-        xaxis_title='Date',
-        yaxis_title='Cumulative Quantity',
-        height=400
-    )
-    
-    return fig
 
 def perform_bulk_analysis(df, progress_callback=None):
     """Perform comprehensive bulk analysis on all items"""
@@ -578,6 +415,83 @@ def create_raw_data_summary_sheet(df, writer):
     summary_df = pd.DataFrame(data_summary)
     summary_df.to_excel(writer, sheet_name='Data Summary', index=False)
 
+def create_daily_demand_chart(daily_demand_series):
+    """Create enhanced daily demand trend chart"""
+    fig = go.Figure()
+    
+    # Add daily demand line
+    fig.add_trace(go.Scatter(
+        x=daily_demand_series.index,
+        y=daily_demand_series.values,
+        mode='lines+markers',
+        name='Daily Demand',
+        line=dict(color='#2E86AB', width=2),
+        marker=dict(size=4),
+        hovertemplate='<b>Date:</b> %{x}<br><b>Demand:</b> %{y}<extra></extra>'
+    ))
+    
+    # Add 7-day moving average if enough data
+    if len(daily_demand_series) >= 7:
+        ma_7 = daily_demand_series.rolling(window=7, center=True).mean()
+        fig.add_trace(go.Scatter(
+            x=ma_7.index,
+            y=ma_7.values,
+            mode='lines',
+            name='7-Day Moving Average',
+            line=dict(color='#F18F01', width=3),
+            hovertemplate='<b>Date:</b> %{x}<br><b>7-Day Avg:</b> %{y:.2f}<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title='📈 Daily Demand Trend Analysis',
+        xaxis_title='Date',
+        yaxis_title='Quantity Demanded',
+        hovermode='x unified',
+        showlegend=True,
+        height=400
+    )
+    
+    return fig
+
+def create_scenarios_chart(scenarios, selected_scenario=None):
+    """Create reorder point scenarios bar chart"""
+    scenario_data = {
+        'Scenario': ['Optimistic', 'Likely', 'Conservative'],
+        'Reorder Point': [scenarios['optimistic_rop'], scenarios['likely_rop'], scenarios['conservative_rop']],
+        'Colors': ['#28a745', '#007bff', '#dc3545']  # Green, Blue, Red
+    }
+    
+    fig = go.Figure()
+    
+    for i, (scenario, value, color) in enumerate(zip(scenario_data['Scenario'], scenario_data['Reorder Point'], scenario_data['Colors'])):
+        # Highlight selected scenario
+        opacity = 1.0 if selected_scenario is None or selected_scenario == scenario else 0.6
+        border_width = 3 if selected_scenario == scenario else 0
+        
+        fig.add_trace(go.Bar(
+            x=[scenario],
+            y=[value],
+            name=scenario,
+            marker=dict(
+                color=color,
+                opacity=opacity,
+                line=dict(width=border_width, color='black')
+            ),
+            text=f'{value:.1f}',
+            textposition='auto',
+            hovertemplate=f'<b>{scenario}</b><br>Reorder Point: %{{y:.2f}}<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title='🎯 Reorder Point Scenarios Comparison',
+        xaxis_title='Scenario Type',
+        yaxis_title='Reorder Point Quantity',
+        showlegend=False,
+        height=400
+    )
+    
+    return fig
+
 def display_bulk_analysis_dashboard(bulk_results_df):
     """Display bulk analysis results dashboard"""
     st.header("📊 Bulk Analysis Dashboard")
@@ -623,40 +537,6 @@ def display_bulk_analysis_dashboard(bulk_results_df):
         )
         st.plotly_chart(fig_pie, use_container_width=True)
     
-    # Risk analysis
-    st.subheader("⚠️ Risk Analysis")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Lead time risk distribution
-        risk_counts = bulk_results_df['Lead_Time_Risk'].value_counts()
-        fig_risk = px.bar(
-            x=risk_counts.index,
-            y=risk_counts.values,
-            title="Lead Time Risk Distribution",
-            color=risk_counts.index,
-            color_discrete_map={'Low': '#28a745', 'Medium': '#ffc107', 'High': '#dc3545'}
-        )
-        st.plotly_chart(fig_risk, use_container_width=True)
-    
-    with col2:
-        # Seasonal items
-        seasonal_count = bulk_results_df['Is_Seasonal'].sum()
-        seasonal_data = pd.DataFrame({
-            'Type': ['Seasonal', 'Non-Seasonal'],
-            'Count': [seasonal_count, len(bulk_results_df) - seasonal_count]
-        })
-        fig_seasonal = px.bar(
-            seasonal_data,
-            x='Type',
-            y='Count',
-            title="Seasonal vs Non-Seasonal Items",
-            color='Type',
-            color_discrete_map={'Seasonal': '#17a2b8', 'Non-Seasonal': '#6c757d'}
-        )
-        st.plotly_chart(fig_seasonal, use_container_width=True)
-    
     # Top items requiring attention
     st.subheader("🚨 Items Requiring Immediate Attention")
     
@@ -671,26 +551,6 @@ def display_bulk_analysis_dashboard(bulk_results_df):
         st.dataframe(attention_items[display_cols].head(10), use_container_width=True)
     else:
         st.success("✅ No items require immediate attention!")
-    
-    # Interactive scatter plot
-    st.subheader("📈 Priority vs Investment Analysis")
-    
-    fig_scatter = px.scatter(
-        bulk_results_df,
-        x='Avg_Daily_Demand',
-        y='Reorder_Point_Likely',
-        size='Total_Quantity',
-        color='Priority',
-        hover_data=['Item', 'Lead_Time_Days'],
-        title="Daily Demand vs Reorder Point (sized by total volume)",
-        color_discrete_map={
-            'Critical': '#dc3545',
-            'High': '#fd7e14',
-            'Medium': '#ffc107', 
-            'Low': '#28a745'
-        }
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
     
     # Detailed data table with filters
     st.subheader("📋 Detailed Analysis Table")
@@ -727,50 +587,9 @@ def display_bulk_analysis_dashboard(bulk_results_df):
     ]
     
     st.dataframe(filtered_df, use_container_width=True, height=400)
-    """Generate simple forecast data for demonstration"""
-    if len(daily_demand_series) < 7:
-        return None
-    
-    # Simple trend-based forecast
-    recent_trend = daily_demand_series.tail(30).mean()
-    seasonal_factor = 1 + 0.1 * np.sin(np.arange(days_ahead) * 2 * np.pi / 365)
-    
-    forecast_dates = pd.date_range(
-        start=daily_demand_series.index[-1] + timedelta(days=1),
-        periods=days_ahead,
-        freq='D'
-    )
-    
-    # Add some randomness to make it realistic
-    np.random.seed(42)
-    noise = np.random.normal(0, recent_trend * 0.2, days_ahead)
-    forecast_values = (recent_trend * seasonal_factor + noise).clip(min=0)
-    
-    return pd.Series(forecast_values, index=forecast_dates)
 
-def generate_forecast_data(daily_demand_series, days_ahead=90):
-    """Generate simple forecast data for demonstration"""
-    if len(daily_demand_series) < 7:
-        return None
-    
-    # Simple trend-based forecast
-    recent_trend = daily_demand_series.tail(30).mean()
-    seasonal_factor = 1 + 0.1 * np.sin(np.arange(days_ahead) * 2 * np.pi / 365)
-    
-    forecast_dates = pd.date_range(
-        start=daily_demand_series.index[-1] + timedelta(days=1),
-        periods=days_ahead,
-        freq='D'
-    )
-    
-    # Add some randomness to make it realistic
-    np.random.seed(42)
-    noise = np.random.normal(0, recent_trend * 0.2, days_ahead)
-    forecast_values = (recent_trend * seasonal_factor + noise).clip(min=0)
-    
-    return pd.Series(forecast_values, index=forecast_dates)
-
-def main():
+def display(df):
+    """Main function to display the reorder point prediction dashboard"""
     # Initialize session state
     if 'start_bulk_analysis' not in st.session_state:
         st.session_state['start_bulk_analysis'] = False
@@ -782,46 +601,9 @@ def main():
         st.sidebar.warning("⚠️ openpyxl not available. Excel export will be disabled. Install with: `pip install openpyxl`")
     
     # Header
-    st.title("🎯 Smart Reorder Point Prediction Dashboard")
+    st.title("🎯 Smart Reorder Point Prediction")
+    st.markdown("Advanced procurement analytics with bulk analysis and Excel export")
     st.markdown("---")
-    
-    # Sidebar for configuration
-    st.sidebar.header("⚙️ Configuration")
-    
-    # Sample data option for demonstration
-    use_sample_data = st.sidebar.checkbox("Use Sample Data", value=True)
-    
-    if use_sample_data:
-        # Create sample data for demonstration
-        np.random.seed(42)
-        dates = pd.date_range(start='2023-01-01', end='2024-12-31', freq='D')
-        
-        sample_data = []
-        items = ['Widget A', 'Component B', 'Part C', 'Material D']
-        
-        for item in items:
-            # Generate realistic order patterns
-            order_dates = np.random.choice(dates, size=np.random.randint(50, 150), replace=False)
-            for date in order_dates:
-                qty = np.random.poisson(lam=20) + 5  # Realistic quantities
-                sample_data.append({
-                    'Item': item,
-                    'Qty Delivered': qty,
-                    'Creation Date': date
-                })
-        
-        df = pd.DataFrame(sample_data)
-        st.sidebar.success("✅ Using sample data")
-    else:
-        st.sidebar.info("📁 Upload your CSV file with columns: Item, Qty Delivered, Creation Date")
-        uploaded_file = st.sidebar.file_uploader("Choose CSV file", type=['csv'])
-        
-        if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            st.sidebar.success("✅ Data loaded successfully")
-        else:
-            st.warning("⚠️ Please upload a CSV file or use sample data to continue.")
-            return
     
     # Validate required columns
     required_columns = ['Item', 'Qty Delivered', 'Creation Date']
@@ -829,6 +611,10 @@ def main():
     
     if missing_columns:
         st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
+        return
+    
+    if df["Item"].dropna().empty:
+        st.error("❌ No items found in the dataset.")
         return
     
     # Main navigation
@@ -984,62 +770,6 @@ def main():
                                     mime="text/csv",
                                     help="Items grouped by priority level"
                                 )
-                        
-                        # Additional CSV downloads
-                        st.markdown("**Additional Reports:**")
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            # Risk Assessment CSV
-                            if 'risk_assessment' in csv_bundle:
-                                st.download_button(
-                                    label="⚠️ Risk Assessment (CSV)",
-                                    data=csv_bundle['risk_assessment'],
-                                    file_name=f"risk_assessment_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="High-risk items requiring attention"
-                                )
-                        
-                        with col2:
-                            # Critical items only
-                            critical_items = bulk_results[bulk_results['Priority'] == 'Critical']
-                            if not critical_items.empty:
-                                critical_csv = critical_items.to_csv(index=False)
-                                st.download_button(
-                                    label="🚨 Critical Items (CSV)",
-                                    data=critical_csv,
-                                    file_name=f"critical_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="Critical priority items only"
-                                )
-                        
-                        # Installation instructions
-                        with st.expander("💡 How to Enable Excel Export", expanded=False):
-                            st.markdown("""
-                            **To enable Excel export functionality:**
-                            
-                            1. **Local Installation:**
-                               ```bash
-                               pip install openpyxl
-                               ```
-                            
-                            2. **Streamlit Cloud/Deployment:**
-                               - Add `openpyxl` to your `requirements.txt` file
-                               - Redeploy your application
-                            
-                            3. **Requirements.txt example:**
-                               ```
-                               streamlit
-                               pandas
-                               numpy
-                               plotly
-                               openpyxl
-                               ```
-                            
-                            Once installed, restart the application for Excel export to become available.
-                            """)
-                
-                    
                 else:
                     st.error("❌ Bulk analysis failed. Please check your data format and try again.")
                     st.session_state['start_bulk_analysis'] = False
@@ -1117,36 +847,21 @@ def main():
         
         return  # Exit here for bulk analysis mode
     
-    # Single Item Analysis Mode (existing code continues below)
-    # Main content
-    col1, col2 = st.columns([3, 1])
+    # Single Item Analysis Mode
+    st.header("📦 Single Item Analysis")
     
-    with col1:
-        st.subheader("📦 Item Selection")
-        selected_item = st.selectbox(
-            "Choose an item to analyze:",
-            options=sorted(df['Item'].unique()),
-            help="Select an item from your inventory to perform reorder point analysis"
-        )
+    # User selects an item to analyze
+    item = st.selectbox("Select Item", df["Item"].dropna().unique())
     
-    with col2:
-        st.subheader("🎛️ Scenario Selection")
-        selected_scenario = st.radio(
-            "Highlight scenario:",
-            options=['Optimistic', 'Likely', 'Conservative'],
-            index=1,
-            help="Choose which reorder scenario to emphasize in visualizations"
-        )
+    # Filter the dataset for that item
+    item_df = df[df["Item"] == item].copy()
     
-    # Filter data for selected item
-    item_data = df[df['Item'] == selected_item].copy()
-    
-    if len(item_data) == 0:
-        st.error(f"❌ No data found for item: {selected_item}")
+    if len(item_df) == 0:
+        st.warning("⚠️ No data available for the selected item.")
         return
     
     # Calculate metrics
-    metrics = calculate_metrics(item_data)
+    metrics = calculate_metrics(item_df)
     
     if metrics is None:
         st.error("❌ Unable to calculate metrics for this item")
@@ -1158,73 +873,16 @@ def main():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric(
-            label="Average Daily Demand",
-            value=f"{metrics['avg_daily_demand']:.2f}",
-            help="Total quantity delivered divided by the number of days in the analysis period"
-        )
+        st.metric("Average Daily Demand", f"{metrics['avg_daily_demand']:.2f}")
     
     with col2:
-        st.metric(
-            label="Average Lead Time",
-            value=f"{metrics['lead_time']:.1f} days",
-            help="Estimated time between placing an order and receiving delivery"
-        )
+        st.metric("Average Lead Time", f"{metrics['lead_time']:.1f} days")
     
     with col3:
-        st.metric(
-            label="Safety Stock",
-            value=f"{metrics['safety_stock']:.2f}",
-            help="Buffer stock to maintain 95% service level during demand/lead time variations"
-        )
+        st.metric("Safety Stock", f"{metrics['safety_stock']:.2f}")
     
     with col4:
-        # Show the selected scenario's ROP
-        scenario_values = {
-            'Optimistic': metrics['optimistic_rop'],
-            'Likely': metrics['likely_rop'],
-            'Conservative': metrics['conservative_rop']
-        }
-        st.metric(
-            label=f"Reorder Point ({selected_scenario})",
-            value=f"{scenario_values[selected_scenario]:.2f}",
-            help=f"Suggested reorder point for {selected_scenario.lower()} scenario"
-        )
-    
-    st.markdown("---")
-    
-    # Decision guidance
-    st.subheader("🧠 Decision Guidance")
-    
-    with st.expander("📋 Scenario Explanations", expanded=True):
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-            **🟢 Optimistic Scenario**
-            - Lower demand and shorter lead times
-            - Use when: Supply chain is stable
-            - Risk: Potential stockouts
-            - Best for: Cost-sensitive items
-            """)
-        
-        with col2:
-            st.markdown("""
-            **🔵 Likely Scenario (Recommended)**
-            - Most probable demand and lead time
-            - Use when: Normal business conditions
-            - Risk: Balanced approach
-            - Best for: Most inventory items
-            """)
-        
-        with col3:
-            st.markdown("""
-            **🔴 Conservative Scenario**
-            - Higher demand and longer lead times
-            - Use when: Uncertain supply/demand
-            - Risk: Higher holding costs
-            - Best for: Critical items
-            """)
+        st.metric("Final Suggested Reorder Point", f"{metrics['likely_rop']:.2f}")
     
     # Visualizations
     st.subheader("📈 Visual Analysis")
@@ -1237,103 +895,13 @@ def main():
         st.plotly_chart(demand_chart, use_container_width=True)
     
     with col2:
-        scenarios_chart = create_scenarios_chart(metrics, selected_scenario)
+        scenarios_chart = create_scenarios_chart(metrics)
         st.plotly_chart(scenarios_chart, use_container_width=True)
     
-    # Row 2: Distribution and cumulative
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        distribution_chart = create_demand_distribution_chart(metrics['daily_demand_series'])
-        st.plotly_chart(distribution_chart, use_container_width=True)
-    
-    with col2:
-        cumulative_chart = create_cumulative_demand_chart(metrics['daily_demand_series'])
-        st.plotly_chart(cumulative_chart, use_container_width=True)
-    
-    # Forecast feature (bonus)
-    st.subheader("🔮 Demand Forecast (Optional)")
-    
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        if st.button("📊 Show 3-Month Forecast"):
-            st.session_state['show_forecast'] = True
-    
-    with col2:
-        st.info("💡 Forecast uses trend analysis and seasonal patterns from historical data")
-    
-    if st.session_state.get('show_forecast', False):
-        forecast = generate_forecast_data(metrics['daily_demand_series'])
+    # Calculations details
+    with st.expander("🧮 Calculation Details"):
+        st.write(f"**Service Level:** 95% (Z-score: 1.65)")
+        st.write(f"**Formula:** ROP = (Daily Demand × Lead Time) + Safety Stock")
+        st.write(f"**Calculation:** {metrics['avg_daily_demand']:.2f} × {metrics['lead_time']:.1f} + {metrics['safety_stock']:.2f} = {metrics['likely_rop']:.2f}")
         
-        if forecast is not None:
-            # Combined historical and forecast chart
-            fig = go.Figure()
-            
-            # Historical data
-            fig.add_trace(go.Scatter(
-                x=metrics['daily_demand_series'].index,
-                y=metrics['daily_demand_series'].values,
-                mode='lines',
-                name='Historical Demand',
-                line=dict(color='#2E86AB', width=2)
-            ))
-            
-            # Forecast data
-            fig.add_trace(go.Scatter(
-                x=forecast.index,
-                y=forecast.values,
-                mode='lines',
-                name='3-Month Forecast',
-                line=dict(color='#F18F01', width=2, dash='dash')
-            ))
-            
-            # Add vertical line to separate historical from forecast
-            fig.add_vline(
-                x=metrics['daily_demand_series'].index[-1],
-                line_dash="dot",
-                line_color="gray",
-                annotation_text="Forecast Start"
-            )
-            
-            fig.update_layout(
-                title='📈 Historical Demand + 3-Month Forecast',
-                xaxis_title='Date',
-                yaxis_title='Daily Demand',
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("⚠️ Insufficient data for forecasting (need at least 7 days)")
-    
-    # Summary and next steps
-    st.markdown("---")
-    st.subheader("🎯 Summary & Next Steps")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown(f"""
-        **📊 Analysis Summary for {selected_item}:**
-        - Data period: {metrics['date_range_days']} days
-        - Total orders: {metrics['total_orders']}
-        - Recommended reorder point: **{metrics['likely_rop']:.2f}** units
-        - Current inventory position needed for review
-        """)
-    
-    with col2:
-        st.markdown("""
-        **🎯 Recommended Actions:**
-        1. ✅ Review current inventory levels
-        2. 📦 Set reorder point in your system
-        3. 🔄 Monitor demand patterns monthly
-        4. ⚡ Consider supplier lead time agreements
-        """)
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("*Dashboard powered by Streamlit and Plotly | Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M") + "*")
-
-if __name__ == "__main__":
-    main()
+        st.write(f"**Data Period:** {metrics['date_range_days']} days with {metrics['total_orders']} orders")
