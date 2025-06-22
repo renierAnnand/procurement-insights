@@ -5,25 +5,59 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import numpy as np
-from datetime import datetime, timedelta
+# MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(
+    page_title="Smart Procurement Analytics Suite", 
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Import all modules
-import contracting_opportunities
-import cross_region
-import duplicates
-import lot_size_optimization
-import reorder_prediction
-import seasonal_price_optimization
-import spend_categorization_anomaly
+# Import all modules - these should be safe to import after page config
+try:
+    import contracting_opportunities
+except ImportError:
+    st.sidebar.error("❌ contracting_opportunities module not found")
+    contracting_opportunities = None
 
-st.set_page_config(page_title="Smart Procurement Analytics Suite", layout="wide")
+try:
+    import cross_region
+except ImportError:
+    st.sidebar.error("❌ cross_region module not found") 
+    cross_region = None
+
+try:
+    import duplicates
+except ImportError:
+    st.sidebar.error("❌ duplicates module not found")
+    duplicates = None
+
+try:
+    import lot_size_optimization
+except ImportError:
+    st.sidebar.error("❌ lot_size_optimization module not found")
+    lot_size_optimization = None
+
+try:
+    import reorder_prediction
+except ImportError:
+    st.sidebar.error("❌ reorder_prediction module not found")
+    reorder_prediction = None
+
+try:
+    import seasonal_price_optimization
+except ImportError:
+    st.sidebar.error("❌ seasonal_price_optimization module not found")
+    seasonal_price_optimization = None
+
+try:
+    import spend_categorization_anomaly
+except ImportError:
+    st.sidebar.error("❌ spend_categorization_anomaly module not found")
+    spend_categorization_anomaly = None
 
 def load_and_clean_data(csv_file):
     """Load and clean procurement data from CSV file with SAR currency prioritization"""
@@ -411,21 +445,29 @@ def main():
     st.title("📦 Smart Procurement Analytics Suite")
     st.markdown("Comprehensive procurement analytics platform with demand forecasting and vendor optimization.")
     
+    # Check for module availability
+    modules_available = {
+        "🔮 Demand Forecasting": True,  # Always available (built-in)
+        "🤝 Contracting Opportunities": contracting_opportunities is not None,
+        "🌍 Cross-Region Optimization": cross_region is not None,
+        "🔍 Duplicate Detection": duplicates is not None,
+        "📦 LOT Size Optimization": lot_size_optimization is not None,
+        "📊 Reorder Prediction": reorder_prediction is not None,
+        "🌟 Seasonal Price Optimization": seasonal_price_optimization is not None,
+        "📈 Spend Analysis & Anomaly Detection": spend_categorization_anomaly is not None
+    }
+    
     # Sidebar for navigation
     st.sidebar.title("📋 Analytics Modules")
     
-    modules = {
-        "🔮 Demand Forecasting": "demand_forecasting",
-        "🤝 Contracting Opportunities": "contracting_opportunities", 
-        "🌍 Cross-Region Optimization": "cross_region",
-        "🔍 Duplicate Detection": "duplicates",
-        "📦 LOT Size Optimization": "lot_size_optimization",
-        "📊 Reorder Prediction": "reorder_prediction",
-        "🌟 Seasonal Price Optimization": "seasonal_price_optimization",
-        "📈 Spend Analysis & Anomaly Detection": "spend_categorization_anomaly"
-    }
+    # Show only available modules
+    available_modules = [module for module, available in modules_available.items() if available]
     
-    selected_module = st.sidebar.selectbox("Select Analysis Module", list(modules.keys()))
+    if len(available_modules) < len(modules_available):
+        missing_count = len(modules_available) - len(available_modules)
+        st.sidebar.warning(f"⚠️ {missing_count} module(s) not available")
+    
+    selected_module = st.sidebar.selectbox("Select Analysis Module", available_modules)
     
     # File upload
     st.sidebar.markdown("---")
@@ -437,7 +479,12 @@ def main():
         
         # Load and clean data
         try:
-            df = load_and_clean_data(csv_file)
+            with st.spinner("📊 Loading and processing data..."):
+                df = load_and_clean_data(csv_file)
+            
+            if df.empty:
+                st.error("❌ No data could be loaded from the uploaded file.")
+                return
             
             # Show data preview in sidebar
             st.sidebar.markdown("---")
@@ -447,6 +494,16 @@ def main():
             
             if 'Vendor Name' in df.columns:
                 st.sidebar.write(f"**Vendors:** {df['Vendor Name'].nunique()}")
+            
+            # Currency info in sidebar
+            price_col, total_col = get_sar_columns(df)
+            if 'Price In SAR' in df.columns:
+                st.sidebar.success("💱 Native SAR data detected")
+            elif 'PO Currency' in df.columns:
+                currencies = df['PO Currency'].value_counts()
+                st.sidebar.info(f"💱 Multi-currency: {len(currencies)} types")
+            else:
+                st.sidebar.info("💱 Single currency assumed")
             
             # Vendor Selection Section (if vendor data exists)
             if 'Vendor Name' in df.columns:
@@ -505,29 +562,45 @@ def main():
                 st.sidebar.info("ℹ️ No vendor column detected")
             
             # Route to selected module
-            module_key = modules[selected_module]
-            
-            # Main content area
-            if module_key == "demand_forecasting":
+            if selected_module == "🔮 Demand Forecasting":
                 display_demand_forecasting(df_filtered, csv_file)
-            elif module_key == "contracting_opportunities":
+            elif selected_module == "🤝 Contracting Opportunities" and contracting_opportunities:
                 contracting_opportunities.display(df_filtered)
-            elif module_key == "cross_region":
+            elif selected_module == "🌍 Cross-Region Optimization" and cross_region:
                 cross_region.display(df_filtered)
-            elif module_key == "duplicates":
+            elif selected_module == "🔍 Duplicate Detection" and duplicates:
                 duplicates.display(df_filtered)
-            elif module_key == "lot_size_optimization":
+            elif selected_module == "📦 LOT Size Optimization" and lot_size_optimization:
                 lot_size_optimization.display(df_filtered)
-            elif module_key == "reorder_prediction":
+            elif selected_module == "📊 Reorder Prediction" and reorder_prediction:
                 reorder_prediction.display(df_filtered)
-            elif module_key == "seasonal_price_optimization":
+            elif selected_module == "🌟 Seasonal Price Optimization" and seasonal_price_optimization:
                 seasonal_price_optimization.display(df_filtered)
-            elif module_key == "spend_categorization_anomaly":
+            elif selected_module == "📈 Spend Analysis & Anomaly Detection" and spend_categorization_anomaly:
                 spend_categorization_anomaly.display(df_filtered)
+            else:
+                st.error(f"❌ Module '{selected_module}' is not available or failed to load.")
+                st.info("Please check that all required module files are in the same directory as this app.")
                 
         except Exception as e:
             st.error(f"❌ Error loading data: {str(e)}")
             st.info("Please check your CSV file format and try again.")
+            
+            # Debug information
+            with st.expander("🔍 Debug Information"):
+                st.write("**Error Details:**")
+                st.code(str(e))
+                
+                if csv_file:
+                    try:
+                        # Try to read just the first few rows for debugging
+                        sample_df = pd.read_csv(csv_file, nrows=5)
+                        st.write("**Sample of uploaded data:**")
+                        st.dataframe(sample_df)
+                        st.write("**Column names:**")
+                        st.write(list(sample_df.columns))
+                    except Exception as debug_error:
+                        st.write(f"Could not read sample data: {debug_error}")
     
     else:
         # Show welcome screen with module overview
@@ -858,7 +931,7 @@ def display_demand_forecasting(df, csv_file):
                 forecast_df = forecast_df[['Date', 'Day_of_Week', 'Forecasted_Quantity', 
                                         'Lower_Bound', 'Upper_Bound', 'Cumulative_Forecast']].reset_index(drop=True)
                 
-                # Format and display with styling (without matplotlib dependency)
+                # Format and display with styling
                 st.dataframe(
                     forecast_df.style.format({
                         'Forecasted_Quantity': '{:.1f}',
@@ -885,73 +958,6 @@ def display_demand_forecasting(df, csv_file):
                     st.metric("Min Day", f"{forecast.min():.1f} units")
                 with col5:
                     st.metric("Forecast Std Dev", f"{forecast.std():.1f} units")
-                
-                # Risk assessment
-                st.subheader("⚠️ Risk Assessment")
-                
-                risk_factors = []
-                
-                # High variability risk
-                if demand_volatility > 30:
-                    risk_factors.append({
-                        'Risk': 'High Demand Variability',
-                        'Level': 'High',
-                        'Impact': 'Stockouts or overstock',
-                        'Mitigation': 'Increase safety stock, flexible suppliers'
-                    })
-                
-                # Trend risk
-                if abs(trend_indicator) > 20:
-                    risk_factors.append({
-                        'Risk': 'Significant Trend Change',
-                        'Level': 'Medium',
-                        'Impact': 'Forecast accuracy',
-                        'Mitigation': 'Regular forecast updates, market analysis'
-                    })
-                
-                # Seasonality risk (simplified check)
-                if len(ts) > 30:
-                    monthly_variation = ts.groupby(ts.index.month).mean().std()
-                    if monthly_variation > ts.mean() * 0.2:
-                        risk_factors.append({
-                            'Risk': 'Seasonal Patterns',
-                            'Level': 'Medium',
-                            'Impact': 'Seasonal stockouts',
-                            'Mitigation': 'Seasonal procurement planning'
-                        })
-                
-                if risk_factors:
-                    risk_df = pd.DataFrame(risk_factors)
-                    st.dataframe(risk_df, use_container_width=True)
-                else:
-                    st.success("✅ No significant risk factors identified")
-                
-                # Action plan
-                st.subheader("🎯 Recommended Action Plan")
-                
-                action_plan = {
-                    'Immediate (1-2 weeks)': [
-                        f"Review current inventory levels against forecast",
-                        f"Contact suppliers for capacity confirmation",
-                        f"Set up reorder point at {reorder_point:.0f} units"
-                    ],
-                    'Short-term (1 month)': [
-                        f"Implement demand monitoring dashboard",
-                        f"Review and adjust safety stock levels",
-                        f"Schedule supplier performance reviews"
-                    ],
-                    'Long-term (3+ months)': [
-                        f"Evaluate contract negotiation opportunities",
-                        f"Implement automated reordering systems",
-                        f"Develop demand sensing capabilities"
-                    ]
-                }
-                
-                for timeframe, actions in action_plan.items():
-                    st.write(f"**{timeframe}:**")
-                    for action in actions:
-                        st.write(f"• {action}")
-                    st.write("")
                 
                 # Enhanced download options
                 st.subheader("📥 Export Options")
@@ -986,18 +992,14 @@ def display_demand_forecasting(df, csv_file):
                     )
                 
                 with col3:
-                    # Action plan export
-                    action_items = []
-                    for timeframe, actions in action_plan.items():
-                        for action in actions:
-                            action_items.append({'Timeframe': timeframe, 'Action': action})
-                    
-                    action_df = pd.DataFrame(action_items)
-                    csv_actions = action_df.to_csv(index=False)
+                    # Historical data export
+                    historical_df = ts.to_frame(name='Historical_Demand')
+                    historical_df['Date'] = historical_df.index
+                    historical_csv = historical_df[['Date', 'Historical_Demand']].to_csv(index=False)
                     st.download_button(
-                        label="📝 Download Action Plan",
-                        data=csv_actions,
-                        file_name=f"action_plan_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                        label="📈 Download Historical Data",
+                        data=historical_csv,
+                        file_name=f"historical_demand_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv"
                     )
                 
@@ -1017,8 +1019,9 @@ def display_demand_forecasting(df, csv_file):
                 st.write(list(df.columns))
                 st.write("**Data Types:**")
                 st.write(df.dtypes)
-                st.write("**Sample Data:**")
-                st.write(df.head())
+                if not df.empty:
+                    st.write("**Sample Data:**")
+                    st.write(df.head())
 
 def display_welcome_screen():
     """Welcome screen with comprehensive module overview"""
@@ -1097,7 +1100,7 @@ def display_welcome_screen():
     Otherwise, it will use the base price columns and assume SAR currency.
     """)
     
-    # Module overview with detailed descriptions
+    # Module overview
     st.subheader("🛠️ Analytics Modules Overview")
     
     modules_detailed = [
@@ -1133,8 +1136,8 @@ def display_welcome_screen():
         },
         {
             "name": "📊 Reorder Prediction",
-            "description": "Smart reorder point prediction based on demand patterns",
-            "features": ["Statistical reorder points", "Safety stock calculation", "Lead time analysis"],
+            "description": "Smart reorder point prediction with bulk analysis and Excel export",
+            "features": ["Statistical reorder points", "Safety stock calculation", "Bulk analysis", "Excel reports", "Priority matrix"],
             "use_case": "Prevent stockouts while minimizing excess inventory"
         },
         {
@@ -1177,35 +1180,6 @@ def display_welcome_screen():
     
     for step_title, step_desc in steps:
         st.write(f"{step_title}: {step_desc}")
-    
-    # Best practices and tips
-    st.subheader("💡 Best Practices & Pro Tips")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **📊 Data Quality Tips:**
-        - Use consistent date formats (YYYY-MM-DD recommended)
-        - Clean and standardize vendor names
-        - Include at least 6 months of historical data
-        - Ensure price and quantity fields are numeric
-        - Remove test transactions and cancelled orders
-        - **Include SAR currency columns when available**
-        """)
-    
-    with col2:
-        st.markdown("""
-        **🎯 Analysis Tips:**
-        - Start with demand forecasting for quick wins
-        - Use vendor selection to focus on key suppliers
-        - Combine multiple modules for comprehensive insights
-        - Regular data updates improve forecast accuracy
-        - Export results for presentation to stakeholders
-        - **All analysis performed in Saudi Riyal (SAR)**
-        - **Review currency validation to ensure accurate totals**
-        - **Check exchange rate consistency for multi-currency data**
-        """)
     
     # Sample data download
     st.subheader("📁 Sample Data Template")
