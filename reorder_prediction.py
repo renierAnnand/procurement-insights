@@ -6,9 +6,24 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import warnings
 import io
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
+
+# Configure Streamlit page - MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(
+    page_title="Smart Reorder Point Prediction",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Try to import openpyxl for Excel functionality
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
+
 warnings.filterwarnings('ignore')
 
 # Configure Streamlit page
@@ -303,33 +318,110 @@ def perform_bulk_analysis(df, progress_callback=None):
 
 def create_excel_report(bulk_results_df, df):
     """Create comprehensive Excel report with multiple sheets"""
+    if not EXCEL_AVAILABLE:
+        st.error("❌ Excel export not available. openpyxl package is required.")
+        return None
+    
     # Create Excel buffer
     excel_buffer = io.BytesIO()
     
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        # Sheet 1: Executive Summary
-        create_executive_summary_sheet(bulk_results_df, writer)
+    try:
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            # Sheet 1: Executive Summary
+            create_executive_summary_sheet(bulk_results_df, writer)
+            
+            # Sheet 2: Detailed Analysis
+            bulk_results_df.to_excel(writer, sheet_name='Detailed Analysis', index=False)
+            
+            # Sheet 3: Priority Matrix
+            create_priority_matrix_sheet(bulk_results_df, writer)
+            
+            # Sheet 4: Risk Assessment
+            create_risk_assessment_sheet(bulk_results_df, writer)
+            
+            # Sheet 5: Action Plan
+            create_action_plan_sheet(bulk_results_df, writer)
+            
+            # Sheet 6: Raw Data Summary
+            create_raw_data_summary_sheet(df, writer)
         
-        # Sheet 2: Detailed Analysis
-        bulk_results_df.to_excel(writer, sheet_name='Detailed Analysis', index=False)
-        
-        # Sheet 3: Priority Matrix
-        create_priority_matrix_sheet(bulk_results_df, writer)
-        
-        # Sheet 4: Risk Assessment
-        create_risk_assessment_sheet(bulk_results_df, writer)
-        
-        # Sheet 5: Action Plan
-        create_action_plan_sheet(bulk_results_df, writer)
-        
-        # Sheet 6: Raw Data Summary
-        create_raw_data_summary_sheet(df, writer)
+        excel_buffer.seek(0)
+        return excel_buffer
+    except Exception as e:
+        st.error(f"❌ Error creating Excel report: {str(e)}")
+        return None
+
+def create_csv_bundle(bulk_results_df, df):
+    """Create multiple CSV files as a bundle when Excel is not available"""
+    csv_files = {}
     
-    excel_buffer.seek(0)
-    return excel_buffer
+    # Executive Summary
+    summary_data = {
+        'Metric': [
+            'Total Items Analyzed',
+            'Critical Priority Items',
+            'High Priority Items', 
+            'Medium Priority Items',
+            'Low Priority Items',
+            'Items with High Lead Time Risk',
+            'Seasonal Items',
+            'Total Reorder Investment (Likely)',
+            'Total Reorder Investment (Conservative)',
+            'Average Lead Time (Days)',
+            'Items Requiring Immediate Action'
+        ],
+        'Value': [
+            len(bulk_results_df),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Critical']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'High']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Medium']),
+            len(bulk_results_df[bulk_results_df['Priority'] == 'Low']),
+            len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']),
+            len(bulk_results_df[bulk_results_df['Is_Seasonal'] == True]),
+            f"{bulk_results_df['Reorder_Point_Likely'].sum():,.0f}",
+            f"{bulk_results_df['Reorder_Point_Conservative'].sum():,.0f}",
+            f"{bulk_results_df['Lead_Time_Days'].mean():.1f}",
+            len(bulk_results_df[(bulk_results_df['Priority'].isin(['Critical', 'High'])) | 
+                              (bulk_results_df['Lead_Time_Risk'] == 'High')])
+        ]
+    }
+    summary_df = pd.DataFrame(summary_data)
+    csv_files['executive_summary'] = summary_df.to_csv(index=False)
+    
+    # Detailed Analysis
+    csv_files['detailed_analysis'] = bulk_results_df.to_csv(index=False)
+    
+    # Priority Matrix
+    priority_analysis = bulk_results_df.groupby('Priority').agg({
+        'Item': 'count',
+        'Total_Quantity': 'sum',
+        'Reorder_Point_Likely': 'sum',
+        'Avg_Daily_Demand': 'mean',
+        'Lead_Time_Days': 'mean'
+    }).round(2)
+    priority_analysis.columns = ['Item_Count', 'Total_Volume', 'Total_Reorder_Investment', 
+                               'Avg_Daily_Demand', 'Avg_Lead_Time']
+    csv_files['priority_matrix'] = priority_analysis.to_csv()
+    
+    # High-risk items
+    high_risk_df = bulk_results_df[
+        (bulk_results_df['Lead_Time_Risk'] == 'High') |
+        (bulk_results_df['Demand_Variability_CV'] > 0.5) |
+        (bulk_results_df['Is_Seasonal'] == True)
+    ].copy()
+    
+    if not high_risk_df.empty:
+        risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
+                       'Is_Seasonal', 'Reorder_Point_Conservative']
+        csv_files['risk_assessment'] = high_risk_df[risk_columns].to_csv(index=False)
+    
+    return csv_files
 
 def create_executive_summary_sheet(bulk_results_df, writer):
     """Create executive summary sheet"""
+    if not EXCEL_AVAILABLE:
+        return
+        
     summary_data = {
         'Metric': [
             'Total Items Analyzed',
@@ -365,6 +457,9 @@ def create_executive_summary_sheet(bulk_results_df, writer):
 
 def create_priority_matrix_sheet(bulk_results_df, writer):
     """Create priority matrix analysis sheet"""
+    if not EXCEL_AVAILABLE:
+        return
+        
     priority_analysis = bulk_results_df.groupby('Priority').agg({
         'Item': 'count',
         'Total_Quantity': 'sum',
@@ -379,6 +474,9 @@ def create_priority_matrix_sheet(bulk_results_df, writer):
 
 def create_risk_assessment_sheet(bulk_results_df, writer):
     """Create risk assessment sheet"""
+    if not EXCEL_AVAILABLE:
+        return
+        
     # High-risk items
     high_risk_df = bulk_results_df[
         (bulk_results_df['Lead_Time_Risk'] == 'High') |
@@ -386,23 +484,27 @@ def create_risk_assessment_sheet(bulk_results_df, writer):
         (bulk_results_df['Is_Seasonal'] == True)
     ].copy()
     
-    high_risk_df['Risk_Factors'] = ''
-    for idx, row in high_risk_df.iterrows():
-        factors = []
-        if row['Lead_Time_Risk'] == 'High':
-            factors.append('High Lead Time')
-        if row['Demand_Variability_CV'] > 0.5:
-            factors.append('High Demand Variability')
-        if row['Is_Seasonal']:
-            factors.append('Seasonal Demand')
-        high_risk_df.at[idx, 'Risk_Factors'] = ', '.join(factors)
-    
-    risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
-                   'Is_Seasonal', 'Risk_Factors', 'Reorder_Point_Conservative']
-    high_risk_df[risk_columns].to_excel(writer, sheet_name='Risk Assessment', index=False)
+    if not high_risk_df.empty:
+        high_risk_df['Risk_Factors'] = ''
+        for idx, row in high_risk_df.iterrows():
+            factors = []
+            if row['Lead_Time_Risk'] == 'High':
+                factors.append('High Lead Time')
+            if row['Demand_Variability_CV'] > 0.5:
+                factors.append('High Demand Variability')
+            if row['Is_Seasonal']:
+                factors.append('Seasonal Demand')
+            high_risk_df.at[idx, 'Risk_Factors'] = ', '.join(factors)
+        
+        risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
+                       'Is_Seasonal', 'Risk_Factors', 'Reorder_Point_Conservative']
+        high_risk_df[risk_columns].to_excel(writer, sheet_name='Risk Assessment', index=False)
 
 def create_action_plan_sheet(bulk_results_df, writer):
     """Create action plan sheet with specific recommendations"""
+    if not EXCEL_AVAILABLE:
+        return
+        
     action_items = []
     
     # Critical items needing immediate attention
@@ -449,6 +551,9 @@ def create_action_plan_sheet(bulk_results_df, writer):
 
 def create_raw_data_summary_sheet(df, writer):
     """Create raw data summary sheet"""
+    if not EXCEL_AVAILABLE:
+        return
+        
     data_summary = {
         'Metric': [
             'Total Records',
@@ -643,7 +748,39 @@ def display_bulk_analysis_dashboard(bulk_results_df):
     
     return pd.Series(forecast_values, index=forecast_dates)
 
+def generate_forecast_data(daily_demand_series, days_ahead=90):
+    """Generate simple forecast data for demonstration"""
+    if len(daily_demand_series) < 7:
+        return None
+    
+    # Simple trend-based forecast
+    recent_trend = daily_demand_series.tail(30).mean()
+    seasonal_factor = 1 + 0.1 * np.sin(np.arange(days_ahead) * 2 * np.pi / 365)
+    
+    forecast_dates = pd.date_range(
+        start=daily_demand_series.index[-1] + timedelta(days=1),
+        periods=days_ahead,
+        freq='D'
+    )
+    
+    # Add some randomness to make it realistic
+    np.random.seed(42)
+    noise = np.random.normal(0, recent_trend * 0.2, days_ahead)
+    forecast_values = (recent_trend * seasonal_factor + noise).clip(min=0)
+    
+    return pd.Series(forecast_values, index=forecast_dates)
+
 def main():
+    # Initialize session state
+    if 'start_bulk_analysis' not in st.session_state:
+        st.session_state['start_bulk_analysis'] = False
+    if 'bulk_analysis_complete' not in st.session_state:
+        st.session_state['bulk_analysis_complete'] = False
+    
+    # Show Excel availability warning here if needed
+    if not EXCEL_AVAILABLE:
+        st.sidebar.warning("⚠️ openpyxl not available. Excel export will be disabled. Install with: `pip install openpyxl`")
+    
     # Header
     st.title("🎯 Smart Reorder Point Prediction Dashboard")
     st.markdown("---")
@@ -694,6 +831,293 @@ def main():
         st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
         return
     
+    # Main navigation
+    analysis_mode = st.sidebar.radio(
+        "Analysis Mode",
+        ["Single Item Analysis", "Bulk Analysis"],
+        help="Choose between analyzing individual items or all items at once"
+    )
+    
+    if analysis_mode == "Bulk Analysis":
+        # Bulk Analysis Section
+        st.header("📊 Bulk Analysis - All Items")
+        st.markdown("Analyze all items in your dataset with comprehensive reporting and Excel export.")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            if st.button("🚀 Start Bulk Analysis", type="primary"):
+                st.session_state['start_bulk_analysis'] = True
+        
+        with col2:
+            st.info(f"📦 {len(df['Item'].unique())} items will be analyzed")
+        
+        # Perform bulk analysis
+        if st.session_state.get('start_bulk_analysis', False):
+            with st.spinner("🔄 Analyzing all items... This may take a few minutes."):
+                # Progress tracking
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                def progress_callback(current, total, item_name):
+                    progress = current / total
+                    progress_bar.progress(progress)
+                    status_text.text(f"Analyzing item {current}/{total}: {item_name}")
+                
+                # Run bulk analysis
+                bulk_results = perform_bulk_analysis(df, progress_callback)
+                
+                # Clear progress indicators
+                progress_bar.empty()
+                status_text.empty()
+                
+                if bulk_results is not None and not bulk_results.empty:
+                    st.success(f"✅ Successfully analyzed {len(bulk_results)} items!")
+                    
+                    # Store results in session state
+                    st.session_state['bulk_results'] = bulk_results
+                    st.session_state['bulk_analysis_complete'] = True
+                    
+                    # Display dashboard
+                    display_bulk_analysis_dashboard(bulk_results)
+                    
+                    # Excel Export Section
+                    st.markdown("---")
+                    st.subheader("📤 Export Options")
+                    
+                    if EXCEL_AVAILABLE:
+                        # Excel export available
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            # Generate Excel report
+                            excel_buffer = create_excel_report(bulk_results, df)
+                            
+                            if excel_buffer is not None:
+                                st.download_button(
+                                    label="📊 Download Complete Excel Report",
+                                    data=excel_buffer.getvalue(),
+                                    file_name=f"inventory_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    help="Download comprehensive Excel report with multiple sheets",
+                                    type="primary"
+                                )
+                        
+                        with col2:
+                            # CSV export option
+                            csv_buffer = bulk_results.to_csv(index=False)
+                            st.download_button(
+                                label="📋 Download CSV Data",
+                                data=csv_buffer,
+                                file_name=f"bulk_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                mime="text/csv",
+                                help="Download raw data in CSV format"
+                            )
+                        
+                        with col3:
+                            # Critical items only export
+                            critical_items = bulk_results[bulk_results['Priority'] == 'Critical']
+                            if not critical_items.empty:
+                                critical_csv = critical_items.to_csv(index=False)
+                                st.download_button(
+                                    label="🚨 Download Critical Items Only",
+                                    data=critical_csv,
+                                    file_name=f"critical_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="Download only critical priority items"
+                                )
+                            else:
+                                st.info("No critical items found")
+                        
+                        # Excel report contents explanation
+                        with st.expander("📋 Excel Report Contents", expanded=False):
+                            st.markdown("""
+                            **The Excel report contains 6 sheets:**
+                            
+                            1. **Executive Summary** - High-level metrics and KPIs
+                            2. **Detailed Analysis** - Complete analysis for all items
+                            3. **Priority Matrix** - Items grouped by priority level
+                            4. **Risk Assessment** - High-risk items requiring attention
+                            5. **Action Plan** - Specific recommendations with timelines
+                            6. **Data Summary** - Raw data statistics and quality metrics
+                            
+                            Perfect for sharing with management and procurement teams!
+                            """)
+                    
+                    else:
+                        # Excel not available - provide CSV alternatives
+                        st.warning("📊 Excel export not available. Providing CSV alternatives:")
+                        
+                        csv_bundle = create_csv_bundle(bulk_results, df)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            # Executive Summary CSV
+                            if 'executive_summary' in csv_bundle:
+                                st.download_button(
+                                    label="📈 Executive Summary (CSV)",
+                                    data=csv_bundle['executive_summary'],
+                                    file_name=f"executive_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="High-level metrics and KPIs"
+                                )
+                        
+                        with col2:
+                            # Detailed Analysis CSV
+                            if 'detailed_analysis' in csv_bundle:
+                                st.download_button(
+                                    label="📋 Detailed Analysis (CSV)",
+                                    data=csv_bundle['detailed_analysis'],
+                                    file_name=f"detailed_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="Complete analysis for all items"
+                                )
+                        
+                        with col3:
+                            # Priority Matrix CSV
+                            if 'priority_matrix' in csv_bundle:
+                                st.download_button(
+                                    label="🎯 Priority Matrix (CSV)",
+                                    data=csv_bundle['priority_matrix'],
+                                    file_name=f"priority_matrix_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="Items grouped by priority level"
+                                )
+                        
+                        # Additional CSV downloads
+                        st.markdown("**Additional Reports:**")
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Risk Assessment CSV
+                            if 'risk_assessment' in csv_bundle:
+                                st.download_button(
+                                    label="⚠️ Risk Assessment (CSV)",
+                                    data=csv_bundle['risk_assessment'],
+                                    file_name=f"risk_assessment_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="High-risk items requiring attention"
+                                )
+                        
+                        with col2:
+                            # Critical items only
+                            critical_items = bulk_results[bulk_results['Priority'] == 'Critical']
+                            if not critical_items.empty:
+                                critical_csv = critical_items.to_csv(index=False)
+                                st.download_button(
+                                    label="🚨 Critical Items (CSV)",
+                                    data=critical_csv,
+                                    file_name=f"critical_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    help="Critical priority items only"
+                                )
+                        
+                        # Installation instructions
+                        with st.expander("💡 How to Enable Excel Export", expanded=False):
+                            st.markdown("""
+                            **To enable Excel export functionality:**
+                            
+                            1. **Local Installation:**
+                               ```bash
+                               pip install openpyxl
+                               ```
+                            
+                            2. **Streamlit Cloud/Deployment:**
+                               - Add `openpyxl` to your `requirements.txt` file
+                               - Redeploy your application
+                            
+                            3. **Requirements.txt example:**
+                               ```
+                               streamlit
+                               pandas
+                               numpy
+                               plotly
+                               openpyxl
+                               ```
+                            
+                            Once installed, restart the application for Excel export to become available.
+                            """)
+                
+                    
+                else:
+                    st.error("❌ Bulk analysis failed. Please check your data format and try again.")
+                    st.session_state['start_bulk_analysis'] = False
+        
+        # Show previous results if available
+        elif st.session_state.get('bulk_analysis_complete', False):
+            if st.button("🔍 Show Previous Bulk Analysis Results"):
+                if 'bulk_results' in st.session_state:
+                    display_bulk_analysis_dashboard(st.session_state['bulk_results'])
+                    
+                    # Re-enable export options
+                    st.markdown("---")
+                    st.subheader("📤 Export Previous Results")
+                    
+                    bulk_results = st.session_state['bulk_results']
+                    
+                    if EXCEL_AVAILABLE:
+                        excel_buffer = create_excel_report(bulk_results, df)
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            if excel_buffer is not None:
+                                st.download_button(
+                                    label="📊 Download Excel Report",
+                                    data=excel_buffer.getvalue(),
+                                    file_name=f"inventory_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+                        
+                        with col2:
+                            csv_buffer = bulk_results.to_csv(index=False)
+                            st.download_button(
+                                label="📋 Download CSV Data", 
+                                data=csv_buffer,
+                                file_name=f"bulk_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                mime="text/csv"
+                            )
+                    else:
+                        # Provide CSV alternatives
+                        st.warning("📊 Excel export not available. Download CSV files:")
+                        
+                        csv_bundle = create_csv_bundle(bulk_results, df)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if 'detailed_analysis' in csv_bundle:
+                                st.download_button(
+                                    label="📋 Detailed Analysis (CSV)",
+                                    data=csv_bundle['detailed_analysis'],
+                                    file_name=f"detailed_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv"
+                                )
+                        
+                        with col2:
+                            if 'executive_summary' in csv_bundle:
+                                st.download_button(
+                                    label="📈 Executive Summary (CSV)",
+                                    data=csv_bundle['executive_summary'],
+                                    file_name=f"executive_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv"
+                                )
+                        
+                        with col3:
+                            if 'priority_matrix' in csv_bundle:
+                                st.download_button(
+                                    label="🎯 Priority Matrix (CSV)",
+                                    data=csv_bundle['priority_matrix'],
+                                    file_name=f"priority_matrix_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv"
+                                )
+                else:
+                    st.warning("Previous results not found. Please run bulk analysis again.")
+        
+        return  # Exit here for bulk analysis mode
+    
+    # Single Item Analysis Mode (existing code continues below)
     # Main content
     col1, col2 = st.columns([3, 1])
     
