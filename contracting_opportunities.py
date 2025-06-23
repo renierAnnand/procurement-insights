@@ -1,3 +1,12 @@
+# Enhanced Contracting Opportunities Module with Saudi Riyal (SAR) Currency Support
+# Features:
+# - Automatic currency detection from data
+# - Multi-currency conversion to SAR
+# - Configurable exchange rates with default rates for 30+ currencies
+# - SAR formatting throughout all displays (ر.س symbol)
+# - Currency conversion summary and portfolio value in SAR
+# - Support for different currency data sources (auto-detect, dedicated column, single currency)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,6 +16,240 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, date
 import calendar
 import json
+import re
+
+# Currency conversion and formatting functions
+def get_default_exchange_rates():
+    """Get default exchange rates to SAR (Saudi Riyal)"""
+    # These are approximate rates - in production, you'd get these from an API
+    return {
+        'SAR': 1.0,
+        'USD': 3.75,  # 1 USD = 3.75 SAR
+        'EUR': 4.10,  # 1 EUR = 4.10 SAR
+        'GBP': 4.70,  # 1 GBP = 4.70 SAR
+        'AED': 1.02,  # 1 AED = 1.02 SAR
+        'QAR': 1.03,  # 1 QAR = 1.03 SAR
+        'KWD': 12.30, # 1 KWD = 12.30 SAR
+        'BHD': 9.95,  # 1 BHD = 9.95 SAR
+        'OMR': 9.75,  # 1 OMR = 9.75 SAR
+        'EGP': 0.24,  # 1 EGP = 0.24 SAR
+        'JOD': 5.29,  # 1 JOD = 5.29 SAR
+        'LBP': 0.0025, # 1 LBP = 0.0025 SAR
+        'CNY': 0.52,  # 1 CNY = 0.52 SAR
+        'INR': 0.045, # 1 INR = 0.045 SAR
+        'PKR': 0.013, # 1 PKR = 0.013 SAR
+        'JPY': 0.025, # 1 JPY = 0.025 SAR
+        'KRW': 0.0028, # 1 KRW = 0.0028 SAR
+        'TRY': 0.22,  # 1 TRY = 0.22 SAR
+        'CAD': 2.80,  # 1 CAD = 2.80 SAR
+        'AUD': 2.50,  # 1 AUD = 2.50 SAR
+        'CHF': 4.20,  # 1 CHF = 4.20 SAR
+        'SEK': 0.36,  # 1 SEK = 0.36 SAR
+        'NOK': 0.35,  # 1 NOK = 0.35 SAR
+        'DKK': 0.55,  # 1 DKK = 0.55 SAR
+        'PLN': 0.93,  # 1 PLN = 0.93 SAR
+        'CZK': 0.17,  # 1 CZK = 0.17 SAR
+        'HUF': 0.010, # 1 HUF = 0.010 SAR
+        'ILS': 1.02,  # 1 ILS = 1.02 SAR
+        'ZAR': 0.21,  # 1 ZAR = 0.21 SAR
+        'BRL': 0.75,  # 1 BRL = 0.75 SAR
+        'MXN': 0.19,  # 1 MXN = 0.19 SAR
+        'RUB': 0.042, # 1 RUB = 0.042 SAR
+        'THB': 0.11,  # 1 THB = 0.11 SAR
+        'MYR': 0.85,  # 1 MYR = 0.85 SAR
+        'SGD': 2.80,  # 1 SGD = 2.80 SAR
+        'HKD': 0.48,  # 1 HKD = 0.48 SAR
+        'PHP': 0.067, # 1 PHP = 0.067 SAR
+        'IDR': 0.00025, # 1 IDR = 0.00025 SAR
+        'VND': 0.00015, # 1 VND = 0.00015 SAR
+    }
+
+def detect_currency_from_data(df):
+    """Detect currencies present in the dataset"""
+    currencies_found = set()
+    
+    # Check if there's a currency column
+    currency_columns = ['Currency', 'Curr', 'CCY', 'Currency Code']
+    currency_col = None
+    
+    for col in currency_columns:
+        if col in df.columns:
+            currency_col = col
+            break
+    
+    if currency_col:
+        currencies_found.update(df[currency_col].dropna().unique())
+    
+    # Check for currency codes in price/amount columns
+    price_columns = [col for col in df.columns if any(word in col.lower() for word in ['price', 'amount', 'cost', 'value', 'total'])]
+    
+    for col in price_columns:
+        if df[col].dtype == 'object':  # String column might contain currency symbols
+            sample_values = df[col].dropna().astype(str).head(100)
+            for value in sample_values:
+                # Extract currency codes (3 letters)
+                currency_matches = re.findall(r'\b[A-Z]{3}\b', str(value))
+                currencies_found.update(currency_matches)
+    
+    # If no currencies found, assume SAR
+    if not currencies_found:
+        currencies_found.add('SAR')
+    
+    return list(currencies_found)
+
+def extract_numeric_value(value_str):
+    """Extract numeric value from string that might contain currency symbols"""
+    if pd.isna(value_str):
+        return 0
+    
+    # Convert to string and remove common currency symbols and letters
+    clean_str = re.sub(r'[A-Za-z$€£¥₹₽﷼,\s]', '', str(value_str))
+    
+    try:
+        return float(clean_str)
+    except:
+        return 0
+
+def convert_to_sar(amount, from_currency, exchange_rates):
+    """Convert amount from given currency to SAR"""
+    if pd.isna(amount) or amount == 0:
+        return 0
+    
+    from_currency = str(from_currency).upper()
+    
+    if from_currency not in exchange_rates:
+        st.warning(f"Exchange rate not found for {from_currency}. Using SAR rate.")
+        return float(amount)
+    
+    return float(amount) * exchange_rates[from_currency]
+
+def format_sar_amount(amount):
+    """Format amount in Saudi Riyal with proper formatting"""
+    if pd.isna(amount) or amount == 0:
+        return "ر.س 0"
+    
+    # Format with thousands separator and 2 decimal places
+    formatted = f"ر.س {amount:,.2f}"
+    return formatted
+
+def setup_currency_conversion(df):
+    """Setup currency conversion interface and return converted dataframe"""
+    st.subheader("💱 Currency Configuration")
+    
+    # Detect currencies in data
+    detected_currencies = detect_currency_from_data(df)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Detected Currencies:**")
+        for curr in detected_currencies:
+            st.write(f"• {curr}")
+    
+    with col2:
+        st.write("**Configuration Options:**")
+        
+        # Currency mapping interface
+        currency_source = st.selectbox(
+            "Currency Data Source",
+            ["Auto-detect from Price Column", "Dedicated Currency Column", "Single Currency (All SAR)"]
+        )
+        
+        if currency_source == "Dedicated Currency Column":
+            currency_columns = [col for col in df.columns if 'curr' in col.lower() or 'ccy' in col.lower()]
+            if currency_columns:
+                currency_column = st.selectbox("Select Currency Column", currency_columns)
+            else:
+                st.warning("No currency column found. Using auto-detection.")
+                currency_source = "Auto-detect from Price Column"
+    
+    # Exchange rate configuration
+    st.write("**Exchange Rates to SAR:**")
+    
+    default_rates = get_default_exchange_rates()
+    exchange_rates = {}
+    
+    # Create exchange rate input interface
+    rate_cols = st.columns(4)
+    for i, currency in enumerate(detected_currencies):
+        with rate_cols[i % 4]:
+            if currency in default_rates:
+                rate = st.number_input(
+                    f"1 {currency} = ? SAR",
+                    value=default_rates[currency],
+                    step=0.01,
+                    format="%.4f",
+                    key=f"rate_{currency}"
+                )
+            else:
+                rate = st.number_input(
+                    f"1 {currency} = ? SAR",
+                    value=1.0,
+                    step=0.01,
+                    format="%.4f",
+                    key=f"rate_{currency}"
+                )
+            exchange_rates[currency] = rate
+    
+    # Add option to update rates from API (placeholder)
+    if st.button("🔄 Update Exchange Rates", help="In production, this would fetch live rates"):
+        st.success("Exchange rates updated! (Demo mode - using default rates)")
+        exchange_rates.update(default_rates)
+    
+    return exchange_rates, currency_source
+
+def convert_dataframe_to_sar(df, exchange_rates, currency_source="Auto-detect from Price Column"):
+    """Convert all monetary columns in dataframe to SAR"""
+    df_converted = df.copy()
+    
+    # Identify monetary columns
+    monetary_columns = []
+    for col in df.columns:
+        if any(word in col.lower() for word in ['price', 'amount', 'cost', 'value', 'total', 'spend']):
+            monetary_columns.append(col)
+    
+    # Convert each monetary column
+    for col in monetary_columns:
+        if col in df_converted.columns:
+            converted_values = []
+            
+            for idx, row in df_converted.iterrows():
+                try:
+                    # Extract numeric value
+                    if df_converted[col].dtype == 'object':
+                        amount = extract_numeric_value(row[col])
+                    else:
+                        amount = float(row[col]) if not pd.isna(row[col]) else 0
+                    
+                    # Determine currency
+                    if currency_source == "Single Currency (All SAR)":
+                        currency = "SAR"
+                    elif currency_source == "Dedicated Currency Column":
+                        currency_col = None
+                        for c in ['Currency', 'Curr', 'CCY', 'Currency Code']:
+                            if c in df_converted.columns:
+                                currency_col = c
+                                break
+                        currency = row[currency_col] if currency_col else "SAR"
+                    else:  # Auto-detect
+                        # Try to extract currency from the value string
+                        if df_converted[col].dtype == 'object':
+                            currency_match = re.search(r'\b([A-Z]{3})\b', str(row[col]))
+                            currency = currency_match.group(1) if currency_match else "SAR"
+                        else:
+                            currency = "SAR"
+                    
+                    # Convert to SAR
+                    sar_amount = convert_to_sar(amount, currency, exchange_rates)
+                    converted_values.append(sar_amount)
+                
+                except Exception as e:
+                    converted_values.append(0)
+            
+            # Update the column with converted values
+            df_converted[col] = converted_values
+    
+    return df_converted
 
 def calculate_vendor_performance_score(vendor_data):
     """Calculate comprehensive vendor performance score"""
@@ -338,52 +581,71 @@ def recommend_contract_type(spend_data, vendor_performance, negotiation_potentia
 def analyze_multi_vendor_aggregation(df):
     """Identify opportunities for vendor consolidation"""
     
+    # Ensure df is valid
+    if not isinstance(df, pd.DataFrame) or len(df) == 0:
+        return pd.DataFrame()
+    
     # Group by item and analyze vendor distribution
     item_vendor_analysis = []
     
-    for item in df['Item'].unique():
-        item_data = df[df['Item'] == item]
-        vendors = item_data['Vendor Name'].unique()
-        
-        if len(vendors) > 1:  # Multiple vendors for same item
-            total_spend = (item_data['Unit Price'] * item_data['Qty Delivered']).sum()
+    try:
+        for item in df['Item'].unique():
+            try:
+                item_data = df[df['Item'] == item]
+                vendors = item_data['Vendor Name'].unique()
+                
+                if len(vendors) > 1:  # Multiple vendors for same item
+                    total_spend = (item_data['Unit Price'] * item_data['Qty Delivered']).sum()
+                    
+                    vendor_spend = item_data.groupby('Vendor Name').agg({
+                        'Unit Price': 'mean',
+                        'Qty Delivered': 'sum',
+                        'Creation Date': 'count'
+                    }).reset_index()
+                    vendor_spend['Total Spend'] = vendor_spend['Unit Price'] * vendor_spend['Qty Delivered']
+                    vendor_spend = vendor_spend.sort_values('Total Spend', ascending=False)
+                    
+                    if len(vendor_spend) == 0:
+                        continue
+                    
+                    # Calculate consolidation potential
+                    primary_vendor = vendor_spend.iloc[0]
+                    secondary_spend = vendor_spend.iloc[1:]['Total Spend'].sum() if len(vendor_spend) > 1 else 0
+                    
+                    # Potential savings from consolidating to primary vendor
+                    avg_primary_price = primary_vendor['Unit Price']
+                    secondary_data = item_data[item_data['Vendor Name'] != primary_vendor['Vendor Name']]
+                    secondary_volume = secondary_data['Qty Delivered'].sum() if len(secondary_data) > 0 else 0
+                    
+                    potential_savings = 0
+                    if len(secondary_data) > 0:
+                        avg_secondary_price = secondary_data['Unit Price'].mean()
+                        if avg_primary_price < avg_secondary_price:
+                            potential_savings = (avg_secondary_price - avg_primary_price) * secondary_volume
+                    
+                    item_desc = item_data['Item Description'].iloc[0] if 'Item Description' in item_data.columns else f"Item {item}"
+                    
+                    item_vendor_analysis.append({
+                        'Item': item,
+                        'Item Description': str(item_desc)[:50] + "..." if len(str(item_desc)) > 50 else str(item_desc),
+                        'Vendor Count': len(vendors),
+                        'Total Spend': total_spend,
+                        'Primary Vendor': primary_vendor['Vendor Name'],
+                        'Primary Vendor Share': (primary_vendor['Total Spend'] / total_spend) * 100 if total_spend > 0 else 0,
+                        'Secondary Spend': secondary_spend,
+                        'Potential Savings': potential_savings,
+                        'Consolidation Priority': 'High' if potential_savings > 5000 and len(vendors) > 2 else 'Medium' if potential_savings > 1000 else 'Low'
+                    })
             
-            vendor_spend = item_data.groupby('Vendor Name').agg({
-                'Unit Price': 'mean',
-                'Qty Delivered': 'sum',
-                'Creation Date': 'count'
-            }).reset_index()
-            vendor_spend['Total Spend'] = vendor_spend['Unit Price'] * vendor_spend['Qty Delivered']
-            vendor_spend = vendor_spend.sort_values('Total Spend', ascending=False)
-            
-            # Calculate consolidation potential
-            primary_vendor = vendor_spend.iloc[0]
-            secondary_spend = vendor_spend.iloc[1:]['Total Spend'].sum()
-            
-            # Potential savings from consolidating to primary vendor
-            avg_primary_price = primary_vendor['Unit Price']
-            secondary_data = item_data[item_data['Vendor Name'] != primary_vendor['Vendor Name']]
-            secondary_volume = secondary_data['Qty Delivered'].sum()
-            
-            potential_savings = 0
-            if len(secondary_data) > 0:
-                avg_secondary_price = secondary_data['Unit Price'].mean()
-                if avg_primary_price < avg_secondary_price:
-                    potential_savings = (avg_secondary_price - avg_primary_price) * secondary_volume
-            
-            item_vendor_analysis.append({
-                'Item': item,
-                'Item Description': item_data['Item Description'].iloc[0] if 'Item Description' in item_data.columns else f"Item {item}",
-                'Vendor Count': len(vendors),
-                'Total Spend': total_spend,
-                'Primary Vendor': primary_vendor['Vendor Name'],
-                'Primary Vendor Share': (primary_vendor['Total Spend'] / total_spend) * 100,
-                'Secondary Spend': secondary_spend,
-                'Potential Savings': potential_savings,
-                'Consolidation Priority': 'High' if potential_savings > 5000 and len(vendors) > 2 else 'Medium' if potential_savings > 1000 else 'Low'
-            })
+            except Exception as e:
+                # Skip this item if there's an error
+                continue
     
-    return pd.DataFrame(item_vendor_analysis).sort_values('Potential Savings', ascending=False)
+    except Exception as e:
+        st.error(f"Error in vendor consolidation analysis: {str(e)}")
+        return pd.DataFrame()
+    
+    return pd.DataFrame(item_vendor_analysis).sort_values('Potential Savings', ascending=False) if item_vendor_analysis else pd.DataFrame()
 
 def generate_procurement_calendar(opportunities_df, current_date=None):
     """Generate interactive procurement calendar with key dates"""
@@ -568,6 +830,72 @@ def display(df):
         st.error(f"Missing required columns: {', '.join(missing_columns)}")
         return
     
+    # Currency conversion setup
+    st.sidebar.header("💱 Currency Settings")
+    
+    with st.sidebar.expander("Currency Configuration", expanded=True):
+        exchange_rates, currency_source = setup_currency_conversion(df)
+        
+        if st.button("Apply Currency Conversion", type="primary"):
+            with st.spinner("Converting all amounts to SAR..."):
+                df = convert_dataframe_to_sar(df, exchange_rates, currency_source)
+                st.success("✅ All amounts converted to Saudi Riyal (SAR)")
+                st.session_state['currency_converted'] = True
+                st.session_state['converted_df'] = df
+                st.session_state['exchange_rates'] = exchange_rates
+                st.rerun()  # Refresh to show the updated display
+    
+    # Additional currency information
+    if 'currency_converted' in st.session_state and st.session_state['currency_converted']:
+        with st.sidebar.expander("💰 SAR Summary"):
+            converted_df = st.session_state['converted_df']
+            if 'Unit Price' in converted_df.columns and 'Qty Delivered' in converted_df.columns:
+                total_value_sar = (converted_df['Unit Price'] * converted_df['Qty Delivered']).sum()
+                st.metric("Total Portfolio Value", format_sar_amount(total_value_sar))
+                
+                avg_order_value = (converted_df['Unit Price'] * converted_df['Qty Delivered']).mean()
+                st.metric("Avg Order Value", format_sar_amount(avg_order_value))
+                
+                # Currency distribution before conversion
+                detected_currencies = detect_currency_from_data(df)
+                st.write(f"**Currencies Processed:** {len(detected_currencies)}")
+                for curr in detected_currencies[:5]:  # Show top 5
+                    st.write(f"• {curr}")
+        
+        if st.sidebar.button("🔄 Reset Currency Conversion"):
+            if 'currency_converted' in st.session_state:
+                del st.session_state['currency_converted']
+            if 'converted_df' in st.session_state:
+                del st.session_state['converted_df']
+            if 'exchange_rates' in st.session_state:
+                del st.session_state['exchange_rates']
+            st.rerun()
+    
+    # Use converted dataframe if available
+    if 'currency_converted' in st.session_state and st.session_state['currency_converted']:
+        df = st.session_state['converted_df']
+        
+        # Display conversion summary
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.success("💱 Currency Conversion Applied")
+        with col2:
+            total_records = len(df)
+            st.info(f"📊 {total_records:,} records converted")
+        with col3:
+            st.info("🇸🇦 All amounts in Saudi Riyal (ر.س)")
+        
+        # Display exchange rates used
+        with st.expander("📋 Exchange Rates Applied"):
+            if 'exchange_rates' in st.session_state:
+                rates = st.session_state.get('exchange_rates', get_default_exchange_rates())
+                rate_cols = st.columns(4)
+                for i, (currency, rate) in enumerate(rates.items()):
+                    with rate_cols[i % 4]:
+                        st.write(f"**1 {currency}** = ر.س {rate:.4f}")
+    else:
+        st.warning("⚠️ Currency conversion not applied. Please configure and apply currency settings in the sidebar.")
+    
     # Clean data
     df_clean = df.dropna(subset=required_columns)
     df_clean = df_clean[df_clean['Unit Price'] > 0]
@@ -681,7 +1009,7 @@ def display(df):
                         st.metric("High Priority", high_priority)
                     with col3:
                         total_spend = opportunities_df['Annual Spend'].sum()
-                        st.metric("Total Spend", f"${total_spend:,.0f}")
+                        st.metric("Total Spend", format_sar_amount(total_spend))
                     with col4:
                         open_negotiations = len(opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation'])
                         st.metric("Open to Negotiation", open_negotiations)
@@ -705,7 +1033,19 @@ def display(df):
                                        x='Negotiation Potential', y='Risk Score',
                                        size='Annual Spend', color='Contract Priority',
                                        hover_data=['Vendor Name', 'Recommended Contract'],
-                                       title="Risk vs Negotiation Potential Matrix")
+                                       title="Risk vs Negotiation Potential Matrix",
+                                       labels={'Annual Spend': 'Annual Spend (SAR)'})
+                        
+                        # Update hover template to show SAR formatting
+                        fig.update_traces(
+                            hovertemplate="<b>%{customdata[0]}</b><br>" +
+                                        "Negotiation Potential: %{x:.2f}<br>" +
+                                        "Risk Score: %{y:.2f}<br>" +
+                                        "Annual Spend: ر.س %{marker.size:,.0f}<br>" +
+                                        "Contract: %{customdata[1]}<br>" +
+                                        "<extra></extra>"
+                        )
+                        
                         st.plotly_chart(fig, use_container_width=True)
                     
                     # Enhanced results table
@@ -719,7 +1059,7 @@ def display(df):
                     
                     st.dataframe(
                         display_df.style.format({
-                            'Annual Spend': '${:,.0f}',
+                            'Annual Spend': lambda x: format_sar_amount(x),
                             'Suitability Score': '{:.2f}',
                             'Vendor Performance': '{:.2f}'
                         }),
@@ -795,6 +1135,16 @@ def display(df):
                                 st.write("• Focus on service improvements")
                                 st.write("• Negotiate payment terms")
                                 st.write("• Explore value-added services")
+                        
+                        # Display annual spend in SAR
+                        st.write(f"**Annual Spend:** {format_sar_amount(vendor['Annual Spend'])}")
+                        
+                        if vendor['Negotiation Class'] == 'Open to Negotiation':
+                            potential_savings = vendor['Annual Spend'] * 0.08  # 8% potential savings
+                            st.write(f"**Potential Savings:** {format_sar_amount(potential_savings)}")
+                        else:
+                            potential_savings = vendor['Annual Spend'] * 0.03  # 3% potential savings
+                            st.write(f"**Potential Savings:** {format_sar_amount(potential_savings)}")
             
             # Negotiation timeline planner
             st.write("### 📅 Negotiation Timeline Planner")
@@ -833,7 +1183,7 @@ def display(df):
             with col2:
                 st.metric("High Priority Items", high_priority_consolidations)
             with col3:
-                st.metric("Total Savings Potential", f"${total_consolidation_savings:,.0f}")
+                st.metric("Total Savings Potential", format_sar_amount(total_consolidation_savings))
             
             # Consolidation visualization
             col1, col2 = st.columns(2)
@@ -858,10 +1208,10 @@ def display(df):
             
             st.dataframe(
                 consolidation_analysis.style.format({
-                    'Total Spend': '${:,.0f}',
+                    'Total Spend': lambda x: format_sar_amount(x),
                     'Primary Vendor Share': '{:.1f}%',
-                    'Secondary Spend': '${:,.0f}',
-                    'Potential Savings': '${:,.0f}'
+                    'Secondary Spend': lambda x: format_sar_amount(x),
+                    'Potential Savings': lambda x: format_sar_amount(x)
                 }),
                 use_container_width=True
             )
@@ -879,14 +1229,14 @@ def display(df):
                 consolidation_plan = consolidation_analysis[consolidation_analysis['Item'].isin(selected_items)]
                 total_plan_savings = consolidation_plan['Potential Savings'].sum()
                 
-                st.success(f"💰 Selected consolidation plan potential savings: ${total_plan_savings:,.0f}")
+                st.success(f"💰 Selected consolidation plan potential savings: {format_sar_amount(total_plan_savings)}")
                 
                 # Implementation timeline
                 st.write("**Recommended Implementation Timeline:**")
                 for i, (_, item) in enumerate(consolidation_plan.iterrows()):
                     phase = f"Phase {i+1}"
                     timeline = f"Month {i*2+1}-{i*2+2}"
-                    st.write(f"• {phase} ({timeline}): Consolidate {item['Item']} with {item['Primary Vendor']} - ${item['Potential Savings']:,.0f} savings")
+                    st.write(f"• {phase} ({timeline}): Consolidate {item['Item']} with {item['Primary Vendor']} - {format_sar_amount(item['Potential Savings'])} savings")
         
         else:
             st.info("No multi-vendor opportunities found in current dataset.")
@@ -912,7 +1262,7 @@ def display(df):
                     st.metric(
                         f"{risk_color} {row['Risk Level']}", 
                         f"{row['Vendor Name']} vendors",
-                        f"${row['Annual Spend']:,.0f}"
+                        format_sar_amount(row['Annual Spend'])
                     )
             
             # Risk matrix visualization
@@ -937,7 +1287,7 @@ def display(df):
                         
                         with col1:
                             st.write("**Risk Factors:**")
-                            st.write(f"• Annual Spend: ${vendor['Annual Spend']:,.0f}")
+                            st.write(f"• Annual Spend: {format_sar_amount(vendor['Annual Spend'])}")
                             st.write(f"• Performance Score: {vendor['Vendor Performance']:.2f}")
                             st.write(f"• Contract Priority: {vendor['Contract Priority']}")
                         
@@ -1062,7 +1412,7 @@ def display(df):
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         total_savings = simulation_df['Cumulative Savings'].iloc[-1]
-                        st.metric("Total Savings", f"${total_savings:,.0f}")
+                        st.metric("Total Savings", format_sar_amount(total_savings))
                     with col2:
                         final_roi = simulation_df['ROI %'].iloc[-1]
                         st.metric("Final ROI", f"{final_roi:.1f}%")
@@ -1086,10 +1436,10 @@ def display(df):
                     # Detailed table
                     st.dataframe(
                         simulation_df.style.format({
-                            'No Contract Cost': '${:,.0f}',
-                            'Contract Cost': '${:,.0f}',
-                            'Annual Savings': '${:,.0f}',
-                            'Cumulative Savings': '${:,.0f}',
+                            'No Contract Cost': lambda x: format_sar_amount(x),
+                            'Contract Cost': lambda x: format_sar_amount(x),
+                            'Annual Savings': lambda x: format_sar_amount(x),
+                            'Cumulative Savings': lambda x: format_sar_amount(x),
                             'ROI %': '{:.1f}%'
                         }),
                         use_container_width=True
@@ -1295,11 +1645,11 @@ def display(df):
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Contract Spend", f"${total_spend:,.0f}")
+                st.metric("Total Contract Spend", format_sar_amount(total_spend))
             with col2:
-                st.metric("High Priority Spend", f"${high_priority_spend:,.0f}")
+                st.metric("High Priority Spend", format_sar_amount(high_priority_spend))
             with col3:
-                st.metric("Potential Annual Savings", f"${potential_savings:,.0f}")
+                st.metric("Potential Annual Savings", format_sar_amount(potential_savings))
             with col4:
                 savings_percentage = (potential_savings / total_spend) * 100
                 st.metric("Savings %", f"{savings_percentage:.1f}%")
@@ -1330,7 +1680,7 @@ def display(df):
             # Generate insights
             if len(opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation']) > 0:
                 open_nego_spend = opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation']['Annual Spend'].sum()
-                insights.append(f"🎯 **Immediate Action**: ${open_nego_spend:,.0f} in spend with vendors open to negotiation")
+                insights.append(f"🎯 **Immediate Action**: {format_sar_amount(open_nego_spend)} in spend with vendors open to negotiation")
             
             if len(opportunities_df[opportunities_df['Risk Level'] == 'High Risk']) > 0:
                 high_risk_count = len(opportunities_df[opportunities_df['Risk Level'] == 'High Risk'])
@@ -1367,7 +1717,7 @@ def display(df):
             if st.button("📥 Export Executive Summary"):
                 summary_data = {
                     'Metric': ['Total Contract Spend', 'High Priority Spend', 'Potential Annual Savings', 'Savings Percentage'],
-                    'Value': [f"${total_spend:,.0f}", f"${high_priority_spend:,.0f}", f"${potential_savings:,.0f}", f"{savings_percentage:.1f}%"],
+                    'Value': [format_sar_amount(total_spend), format_sar_amount(high_priority_spend), format_sar_amount(potential_savings), f"{savings_percentage:.1f}%"],
                     'Strategic_Focus': ['Contract Portfolio', 'Immediate Action', 'Financial Impact', 'Performance Target']
                 }
                 
