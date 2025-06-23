@@ -89,6 +89,75 @@ def check_module_availability():
     
     return modules_status
 
+def clean_and_validate_data(df):
+    """Clean and validate data with proper error handling"""
+    try:
+        if df is None or len(df) == 0:
+            return None, "No data provided"
+        
+        # Make a copy to avoid modifying original
+        df_clean = df.copy()
+        
+        # Convert numeric columns safely
+        numeric_columns = ['Unit Price', 'Qty Delivered']
+        for col in numeric_columns:
+            if col in df_clean.columns:
+                # Convert to numeric, coercing errors to NaN
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                
+                # Fill NaN values with 0 or remove rows
+                df_clean = df_clean.dropna(subset=[col])
+        
+        # Convert date column safely
+        if 'Creation Date' in df_clean.columns:
+            df_clean['Creation Date'] = pd.to_datetime(df_clean['Creation Date'], errors='coerce')
+            df_clean = df_clean.dropna(subset=['Creation Date'])
+        
+        # Calculate Line Total safely
+        if 'Unit Price' in df_clean.columns and 'Qty Delivered' in df_clean.columns:
+            # Ensure both columns are numeric
+            unit_price = pd.to_numeric(df_clean['Unit Price'], errors='coerce').fillna(0)
+            qty_delivered = pd.to_numeric(df_clean['Qty Delivered'], errors='coerce').fillna(0)
+            df_clean['Line Total'] = unit_price * qty_delivered
+        
+        return df_clean, "Data cleaned successfully"
+        
+    except Exception as e:
+        return None, f"Data cleaning failed: {str(e)}"
+
+def calculate_safe_metrics(df):
+    """Calculate metrics safely with error handling"""
+    metrics = {
+        'total_records': 0,
+        'unique_vendors': 0,
+        'unique_items': 0,
+        'total_spend': 0
+    }
+    
+    try:
+        if df is not None and len(df) > 0:
+            metrics['total_records'] = len(df)
+            
+            if 'Vendor Name' in df.columns:
+                metrics['unique_vendors'] = df['Vendor Name'].nunique()
+            
+            if 'Item' in df.columns:
+                metrics['unique_items'] = df['Item'].nunique()
+            
+            # Calculate total spend safely
+            if 'Line Total' in df.columns:
+                line_total = pd.to_numeric(df['Line Total'], errors='coerce').fillna(0)
+                metrics['total_spend'] = line_total.sum()
+            elif 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
+                unit_price = pd.to_numeric(df['Unit Price'], errors='coerce').fillna(0)
+                qty_delivered = pd.to_numeric(df['Qty Delivered'], errors='coerce').fillna(0)
+                metrics['total_spend'] = (unit_price * qty_delivered).sum()
+    
+    except Exception as e:
+        st.error(f"Error calculating metrics: {str(e)}")
+    
+    return metrics
+
 def create_sample_data():
     """Create sample procurement data for testing"""
     np.random.seed(42)
@@ -181,10 +250,11 @@ def main():
                 df = pd.read_excel(uploaded_file)
             
             data_source = f"Uploaded file: {uploaded_file.name}"
-            st.sidebar.success(f"✅ Loaded {len(df)} records")
+            st.sidebar.success(f"✅ File loaded: {len(df)} records")
             
         except Exception as e:
             st.sidebar.error(f"Error loading file: {str(e)}")
+            df = None
     
     # Option to use sample data
     if df is None:
@@ -195,132 +265,138 @@ def main():
     
     # Main content area
     if df is not None:
-        # Data overview
-        st.subheader(f"📊 Data Overview - {data_source}")
+        # Clean and validate data
+        df_clean, clean_message = clean_and_validate_data(df)
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Records", f"{len(df):,}")
-        with col2:
-            unique_vendors = df['Vendor Name'].nunique() if 'Vendor Name' in df.columns else 0
-            st.metric("Unique Vendors", unique_vendors)
-        with col3:
-            unique_items = df['Item'].nunique() if 'Item' in df.columns else 0
-            st.metric("Unique Items", unique_items)
-        with col4:
-            if all(col in df.columns for col in ['Unit Price', 'Qty Delivered']):
-                total_spend = (df['Unit Price'] * df['Qty Delivered']).sum()
-                st.metric("Total Spend", f"${total_spend:,.0f}")
-            else:
-                st.metric("Data Quality", "Needs Review")
-        
-        # Data preview
-        with st.expander("👀 Data Preview"):
-            st.dataframe(df.head(10), use_container_width=True)
+        if df_clean is not None:
+            # Calculate metrics safely
+            metrics = calculate_safe_metrics(df_clean)
             
-            # Data quality check
-            st.subheader("🔍 Data Quality Check")
-            quality_issues = []
+            # Data overview
+            st.subheader(f"📊 Data Overview - {data_source}")
             
-            # Check for required columns
-            required_columns = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
-            missing_columns = [col for col in required_columns if col not in df.columns]
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Records", f"{metrics['total_records']:,}")
+            with col2:
+                st.metric("Unique Vendors", metrics['unique_vendors'])
+            with col3:
+                st.metric("Unique Items", metrics['unique_items'])
+            with col4:
+                st.metric("Total Spend", f"${metrics['total_spend']:,.0f}")
             
-            if missing_columns:
-                quality_issues.append(f"Missing columns: {', '.join(missing_columns)}")
-            
-            # Check for null values
-            null_counts = df.isnull().sum()
-            significant_nulls = null_counts[null_counts > len(df) * 0.1]
-            
-            if len(significant_nulls) > 0:
-                quality_issues.append(f"High null values in: {', '.join(significant_nulls.index)}")
-            
-            # Check for data types
-            if 'Creation Date' in df.columns:
-                try:
-                    pd.to_datetime(df['Creation Date'])
-                except:
-                    quality_issues.append("Creation Date column needs date format conversion")
-            
-            if quality_issues:
-                for issue in quality_issues:
-                    st.warning(f"⚠️ {issue}")
-            else:
-                st.success("✅ Data quality looks good!")
-        
-        # Module selection and execution
-        st.markdown("---")
-        st.subheader("🚀 Analytics Modules")
-        
-        # Get available modules
-        available_modules = {name: status for name, status in modules_status.items() 
-                           if status['status'] == 'available'}
-        
-        if available_modules:
-            # Module selection
-            module_options = {
-                'contracting_opportunities': '🤝 Enhanced Contracting Opportunities',
-                'seasonal_price_optimization': '🌟 Seasonal Price Optimization',
-                'spend_categorization_anomaly': '📊 Spend Analysis & Anomaly Detection',
-                'lot_size_optimization': '📦 LOT Size Optimization',
-                'cross_region': '🌍 Cross-Region Analysis',
-                'duplicates': '🔍 Duplicate Detection',
-                'reorder_prediction': '📈 Reorder Prediction'
-            }
-            
-            # Filter to available modules
-            available_options = {k: v for k, v in module_options.items() if k in available_modules}
-            
-            selected_module = st.selectbox(
-                "Select Analytics Module:",
-                list(available_options.keys()),
-                format_func=lambda x: available_options[x],
-                index=0
-            )
-            
-            # Module description
-            module_descriptions = {
-                'contracting_opportunities': "🎯 AI-powered contract analysis with advanced ML, real-time data integration, and comprehensive reporting. Includes vendor segmentation, risk assessment, and TCO analysis.",
-                'seasonal_price_optimization': "📈 Advanced seasonal analysis with ML forecasting, market intelligence, and optimal timing recommendations.",
-                'spend_categorization_anomaly': "🔍 AI-powered spend categorization with advanced anomaly detection using multiple ML algorithms.",
-                'lot_size_optimization': "📊 Economic Order Quantity optimization with ML demand forecasting and inventory analysis.",
-                'cross_region': "🌍 Cross-regional vendor optimization and consolidation analysis.",
-                'duplicates': "🔎 Intelligent duplicate vendor and item detection using fuzzy matching.",
-                'reorder_prediction': "📈 Smart reorder point prediction with statistical analysis."
-            }
-            
-            if selected_module in module_descriptions:
-                st.info(module_descriptions[selected_module])
-            
-            # Execute selected module
-            st.markdown("---")
-            
-            try:
-                module = available_modules[selected_module]['module']
+            # Data preview
+            with st.expander("👀 Data Preview"):
+                st.dataframe(df_clean.head(10), use_container_width=True)
                 
-                # Call the module's display function
-                if hasattr(module, 'display'):
-                    module.display(df)
-                elif hasattr(module, 'display_enhanced_contracting'):
-                    module.display_enhanced_contracting(df)
+                # Data quality check
+                st.subheader("🔍 Data Quality Check")
+                quality_issues = []
+                
+                # Check for required columns
+                required_columns = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
+                missing_columns = [col for col in required_columns if col not in df_clean.columns]
+                
+                if missing_columns:
+                    quality_issues.append(f"Missing columns: {', '.join(missing_columns)}")
+                
+                # Check for null values
+                null_counts = df_clean.isnull().sum()
+                significant_nulls = null_counts[null_counts > len(df_clean) * 0.1]
+                
+                if len(significant_nulls) > 0:
+                    quality_issues.append(f"High null values in: {', '.join(significant_nulls.index)}")
+                
+                # Check data types
+                numeric_columns = ['Unit Price', 'Qty Delivered']
+                for col in numeric_columns:
+                    if col in df_clean.columns:
+                        non_numeric = pd.to_numeric(df_clean[col], errors='coerce').isna().sum()
+                        if non_numeric > 0:
+                            quality_issues.append(f"Non-numeric values in {col}: {non_numeric} rows")
+                
+                if quality_issues:
+                    for issue in quality_issues:
+                        st.warning(f"⚠️ {issue}")
                 else:
-                    st.error(f"Module {selected_module} doesn't have a proper display function")
-                    
-            except Exception as e:
-                st.error(f"Error running module {selected_module}: {str(e)}")
+                    st.success("✅ Data quality looks good!")
+            
+            # Module selection and execution
+            st.markdown("---")
+            st.subheader("🚀 Analytics Modules")
+            
+            # Get available modules
+            available_modules = {name: status for name, status in modules_status.items() 
+                               if status['status'] == 'available'}
+            
+            if available_modules:
+                # Module selection
+                module_options = {
+                    'contracting_opportunities': '🤝 Enhanced Contracting Opportunities',
+                    'seasonal_price_optimization': '🌟 Seasonal Price Optimization',
+                    'spend_categorization_anomaly': '📊 Spend Analysis & Anomaly Detection',
+                    'lot_size_optimization': '📦 LOT Size Optimization',
+                    'cross_region': '🌍 Cross-Region Analysis',
+                    'duplicates': '🔍 Duplicate Detection',
+                    'reorder_prediction': '📈 Reorder Prediction'
+                }
                 
-                # Show detailed error in expander
-                with st.expander("🔧 Debug Information"):
-                    st.code(f"Error: {str(e)}")
-                    st.code(f"Module path: {available_modules[selected_module]['path']}")
+                # Filter to available modules
+                available_options = {k: v for k, v in module_options.items() if k in available_modules}
+                
+                selected_module = st.selectbox(
+                    "Select Analytics Module:",
+                    list(available_options.keys()),
+                    format_func=lambda x: available_options[x],
+                    index=0
+                )
+                
+                # Module description
+                module_descriptions = {
+                    'contracting_opportunities': "🎯 AI-powered contract analysis with advanced ML, real-time data integration, and comprehensive reporting. Includes vendor segmentation, risk assessment, and TCO analysis.",
+                    'seasonal_price_optimization': "📈 Advanced seasonal analysis with ML forecasting, market intelligence, and optimal timing recommendations.",
+                    'spend_categorization_anomaly': "🔍 AI-powered spend categorization with advanced anomaly detection using multiple ML algorithms.",
+                    'lot_size_optimization': "📊 Economic Order Quantity optimization with ML demand forecasting and inventory analysis.",
+                    'cross_region': "🌍 Cross-regional vendor optimization and consolidation analysis.",
+                    'duplicates': "🔎 Intelligent duplicate vendor and item detection using fuzzy matching.",
+                    'reorder_prediction': "📈 Smart reorder point prediction with statistical analysis."
+                }
+                
+                if selected_module in module_descriptions:
+                    st.info(module_descriptions[selected_module])
+                
+                # Execute selected module
+                st.markdown("---")
+                
+                try:
+                    module = available_modules[selected_module]['module']
+                    
+                    # Call the module's display function with cleaned data
+                    if hasattr(module, 'display'):
+                        module.display(df_clean)
+                    else:
+                        st.error(f"Module {selected_module} doesn't have a proper display function")
+                        
+                except Exception as e:
+                    st.error(f"Error running module {selected_module}: {str(e)}")
+                    
+                    # Show detailed error in expander
+                    with st.expander("🔧 Debug Information"):
+                        st.code(f"Error: {str(e)}")
+                        st.code(f"Module path: {available_modules[selected_module]['path']}")
+                        st.code(f"Data shape: {df_clean.shape}")
+                        st.code(f"Data columns: {list(df_clean.columns)}")
+            
+            else:
+                st.warning("⚠️ No analytics modules are currently available.")
+                st.info("Please ensure the module files are in the correct location:")
+                
+                for module_name, status in modules_status.items():
+                    st.code(f"{module_name}.py - Expected at: {status['path']}")
         
         else:
-            st.warning("⚠️ No analytics modules are currently available.")
-            st.info("Please ensure the module files are in the correct location:")
-            
-            for module_name, status in modules_status.items():
-                st.code(f"{module_name}.py - Expected at: {status['path']}")
+            st.error(f"❌ Data validation failed: {clean_message}")
+            st.info("Please check your data format and try again.")
     
     else:
         # Welcome screen when no data is loaded
@@ -376,6 +452,13 @@ def main():
         - Warehouse (W/H)
         - Product Family
         - Item Description
+        
+        ### 📊 Data Quality Tips
+        
+        - Ensure numeric columns contain only numbers
+        - Use consistent date formats (YYYY-MM-DD recommended)
+        - Remove or fix any special characters in numeric fields
+        - Check for missing values in required columns
         """)
         
         # Show module availability status
@@ -419,6 +502,12 @@ def main():
             ```
             
             4. **Run the app**: `streamlit run app.py`
+            
+            **Troubleshooting Data Issues:**
+            - Ensure numeric columns don't contain text
+            - Check date formats are consistent
+            - Remove any special characters from numbers
+            - Verify column names match requirements
             """)
 
 if __name__ == "__main__":
