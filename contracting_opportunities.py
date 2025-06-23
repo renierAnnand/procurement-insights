@@ -503,8 +503,10 @@ def setup_currency_conversion(df):
             for rec in recommendations:
                 st.write(f"• {rec}")
     
-    # Advanced options
-    with st.expander("⚙️ Advanced Options"):
+    # Advanced options as separate section (not nested expander)
+    if st.checkbox("⚙️ Show Advanced Options", value=False):
+        st.write("---")
+        st.write("### ⚙️ Advanced Currency Options")
         
         # Peso-specific settings
         st.write("**Peso Currency Settings:**")
@@ -546,6 +548,7 @@ def setup_currency_conversion(df):
                 'COP': 0.0009, 'MXN': 0.19, 'CLP': 0.0042, 'ARS': 0.0095,
                 'UYU': 0.096, 'DOP': 0.067, 'PHP': 0.067
             }
+            peso_currencies_found = [c for c in detected_currencies if c in currency_info['peso_currencies']]
             for peso_curr in peso_currencies_found:
                 if peso_curr in peso_rates:
                     exchange_rates[peso_curr] = peso_rates[peso_curr]
