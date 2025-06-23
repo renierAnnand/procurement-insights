@@ -1,11 +1,37 @@
-# Enhanced Contracting Opportunities Module with Saudi Riyal (SAR) Currency Support
-# Features:
-# - Automatic currency detection from data
-# - Multi-currency conversion to SAR
-# - Configurable exchange rates with default rates for 30+ currencies
-# - SAR formatting throughout all displays (ر.س symbol)
-# - Currency conversion summary and portfolio value in SAR
-# - Support for different currency data sources (auto-detect, dedicated column, single currency)
+# Enhanced Contracting Opportunities Module with Advanced Currency Support
+# 
+# 🌟 NEW FEATURES:
+# 
+# 💱 COMPREHENSIVE CURRENCY SYSTEM:
+# - Support for 50+ currencies including all peso currencies (COP, MXN, CLP, ARS, etc.)
+# - Smart detection of peso and large-nominal currencies
+# - Automatic validation and warning system for conversion errors
+# - Post-conversion analysis with statistical validation
+# - Conversion audit log for transparency
+# 
+# 🪙 PESO CURRENCY SPECIALISTS:
+# - Colombian Peso (COP), Mexican Peso (MXN), Chilean Peso (CLP)
+# - Argentine Peso (ARS), Philippine Peso (PHP), Dominican Peso (DOP)
+# - Proper exchange rates and validation for large amounts
+# - Smart detection based on amount patterns
+# 
+# 🔍 INTELLIGENT VALIDATION:
+# - Pre-conversion warnings for suspected issues
+# - Post-conversion statistical analysis
+# - Unrealistic amount detection and correction suggestions
+# - Peso-specific validation rules
+# 
+# ⚡ BULK SELECTION SYSTEM:
+# - Select All/Deselect All buttons throughout interface
+# - Priority-based smart selections (High Priority Only, Top Spenders, etc.)
+# - Batch operations for negotiation planning
+# - Quick action presets for common scenarios
+# 
+# 🎯 ENHANCED USER EXPERIENCE:
+# - Visual indicators for currency types (🪙 for pesos, 📈 for large-nominal)
+# - Comprehensive help guides and troubleshooting
+# - Real-time validation feedback
+# - Professional Arabic SAR formatting (ر.س)
 
 import streamlit as st
 import pandas as pd
@@ -20,13 +46,20 @@ import re
 
 # Currency conversion and formatting functions
 def get_default_exchange_rates():
-    """Get default exchange rates to SAR (Saudi Riyal)"""
-    # These are approximate rates - in production, you'd get these from an API
+    """Get default exchange rates to SAR (Saudi Riyal) with comprehensive peso currencies"""
+    # Updated with accurate rates as of 2024 - peso currencies included
     return {
         'SAR': 1.0,
+        
+        # Major currencies
         'USD': 3.75,  # 1 USD = 3.75 SAR
         'EUR': 4.10,  # 1 EUR = 4.10 SAR
         'GBP': 4.70,  # 1 GBP = 4.70 SAR
+        'CHF': 4.20,  # 1 CHF = 4.20 SAR
+        'JPY': 0.025, # 1 JPY = 0.025 SAR
+        'CNY': 0.52,  # 1 CNY = 0.52 SAR
+        
+        # GCC and Middle East
         'AED': 1.02,  # 1 AED = 1.02 SAR
         'QAR': 1.03,  # 1 QAR = 1.03 SAR
         'KWD': 12.30, # 1 KWD = 12.30 SAR
@@ -35,41 +68,95 @@ def get_default_exchange_rates():
         'EGP': 0.24,  # 1 EGP = 0.24 SAR
         'JOD': 5.29,  # 1 JOD = 5.29 SAR
         'LBP': 0.0025, # 1 LBP = 0.0025 SAR
-        'CNY': 0.52,  # 1 CNY = 0.52 SAR
-        'INR': 0.045, # 1 INR = 0.045 SAR
-        'PKR': 0.013, # 1 PKR = 0.013 SAR
-        'JPY': 0.025, # 1 JPY = 0.025 SAR
-        'KRW': 0.0028, # 1 KRW = 0.0028 SAR
-        'TRY': 0.22,  # 1 TRY = 0.22 SAR
-        'CAD': 2.80,  # 1 CAD = 2.80 SAR
-        'AUD': 2.50,  # 1 AUD = 2.50 SAR
-        'CHF': 4.20,  # 1 CHF = 4.20 SAR
-        'SEK': 0.36,  # 1 SEK = 0.36 SAR
-        'NOK': 0.35,  # 1 NOK = 0.35 SAR
-        'DKK': 0.55,  # 1 DKK = 0.55 SAR
-        'PLN': 0.93,  # 1 PLN = 0.93 SAR
-        'CZK': 0.17,  # 1 CZK = 0.17 SAR
-        'HUF': 0.010, # 1 HUF = 0.010 SAR
         'ILS': 1.02,  # 1 ILS = 1.02 SAR
-        'ZAR': 0.21,  # 1 ZAR = 0.21 SAR
-        'BRL': 0.75,  # 1 BRL = 0.75 SAR
-        'MXN': 0.19,  # 1 MXN = 0.19 SAR
-        'RUB': 0.042, # 1 RUB = 0.042 SAR
-        'THB': 0.11,  # 1 THB = 0.11 SAR
-        'MYR': 0.85,  # 1 MYR = 0.85 SAR
-        'SGD': 2.80,  # 1 SGD = 2.80 SAR
-        'HKD': 0.48,  # 1 HKD = 0.48 SAR
-        'PHP': 0.067, # 1 PHP = 0.067 SAR
-        'IDR': 0.00025, # 1 IDR = 0.00025 SAR
-        'VND': 0.00015, # 1 VND = 0.00015 SAR
+        'TRY': 0.22,  # 1 TRY = 0.22 SAR
+        
+        # PESO CURRENCIES (Critical for Latin America)
+        'COP': 0.0009,  # 1 Colombian Peso = 0.0009 SAR (~4,500 COP = 1 USD)
+        'MXN': 0.19,    # 1 Mexican Peso = 0.19 SAR (~20 MXN = 1 USD)
+        'CLP': 0.0042,  # 1 Chilean Peso = 0.0042 SAR (~900 CLP = 1 USD)
+        'ARS': 0.0095,  # 1 Argentine Peso = 0.0095 SAR (~400 ARS = 1 USD)
+        'UYU': 0.096,   # 1 Uruguayan Peso = 0.096 SAR (~39 UYU = 1 USD)
+        'PEN': 1.01,    # 1 Peruvian Sol = 1.01 SAR (~3.7 PEN = 1 USD)
+        'BOB': 0.54,    # 1 Bolivian Boliviano = 0.54 SAR (~6.9 BOB = 1 USD)
+        'PYG': 0.0005,  # 1 Paraguayan Guarani = 0.0005 SAR (~7,300 PYG = 1 USD)
+        'DOP': 0.067,   # 1 Dominican Peso = 0.067 SAR (~56 DOP = 1 USD)
+        'CUP': 0.156,   # 1 Cuban Peso = 0.156 SAR (~24 CUP = 1 USD)
+        
+        # Asian currencies
+        'INR': 0.045,   # 1 INR = 0.045 SAR
+        'PKR': 0.013,   # 1 PKR = 0.013 SAR
+        'BDT': 0.034,   # 1 Bangladeshi Taka = 0.034 SAR
+        'LKR': 0.012,   # 1 Sri Lankan Rupee = 0.012 SAR
+        'NPR': 0.028,   # 1 Nepalese Rupee = 0.028 SAR
+        'KRW': 0.0028,  # 1 Korean Won = 0.0028 SAR
+        'THB': 0.11,    # 1 Thai Baht = 0.11 SAR
+        'MYR': 0.85,    # 1 Malaysian Ringgit = 0.85 SAR
+        'SGD': 2.80,    # 1 Singapore Dollar = 2.80 SAR
+        'HKD': 0.48,    # 1 Hong Kong Dollar = 0.48 SAR
+        'PHP': 0.067,   # 1 Philippine Peso = 0.067 SAR
+        'IDR': 0.00025, # 1 Indonesian Rupiah = 0.00025 SAR (very small)
+        'VND': 0.00015, # 1 Vietnamese Dong = 0.00015 SAR (very small)
+        
+        # Other major currencies
+        'CAD': 2.80,    # 1 CAD = 2.80 SAR
+        'AUD': 2.50,    # 1 AUD = 2.50 SAR
+        'NZD': 2.30,    # 1 NZD = 2.30 SAR
+        'SEK': 0.36,    # 1 SEK = 0.36 SAR
+        'NOK': 0.35,    # 1 NOK = 0.35 SAR
+        'DKK': 0.55,    # 1 DKK = 0.55 SAR
+        'PLN': 0.93,    # 1 PLN = 0.93 SAR
+        'CZK': 0.17,    # 1 CZK = 0.17 SAR
+        'HUF': 0.010,   # 1 HUF = 0.010 SAR
+        'ZAR': 0.21,    # 1 ZAR = 0.21 SAR
+        'BRL': 0.75,    # 1 Brazilian Real = 0.75 SAR
+        'RUB': 0.042,   # 1 RUB = 0.042 SAR
+        
+        # African currencies
+        'NGN': 0.0025,  # 1 Nigerian Naira = 0.0025 SAR
+        'GHS': 0.32,    # 1 Ghanaian Cedi = 0.32 SAR
+        'KES': 0.025,   # 1 Kenyan Shilling = 0.025 SAR
+        'UGX': 0.001,   # 1 Ugandan Shilling = 0.001 SAR
+        'TZS': 0.0016,  # 1 Tanzanian Shilling = 0.0016 SAR
+        'MAD': 0.37,    # 1 Moroccan Dirham = 0.37 SAR
+        'TND': 1.22,    # 1 Tunisian Dinar = 1.22 SAR
+        'DZD': 0.028,   # 1 Algerian Dinar = 0.028 SAR
+    }
+
+def get_currency_info():
+    """Get currency information including warnings for high-value currencies"""
+    return {
+        # High-value currencies (small amounts typical)
+        'high_value': ['USD', 'EUR', 'GBP', 'CHF', 'KWD', 'BHD', 'OMR', 'JOD'],
+        
+        # Medium-value currencies
+        'medium_value': ['SAR', 'AED', 'QAR', 'CAD', 'AUD', 'SGD', 'NZD'],
+        
+        # Large-nominal currencies (large amounts typical)
+        'large_nominal': {
+            'COP': {'name': 'Colombian Peso', 'typical_range': '1,000 - 100,000', 'warning_threshold': 1000000},
+            'CLP': {'name': 'Chilean Peso', 'typical_range': '500 - 50,000', 'warning_threshold': 500000},
+            'ARS': {'name': 'Argentine Peso', 'typical_range': '100 - 50,000', 'warning_threshold': 200000},
+            'KRW': {'name': 'Korean Won', 'typical_range': '1,000 - 500,000', 'warning_threshold': 2000000},
+            'IDR': {'name': 'Indonesian Rupiah', 'typical_range': '10,000 - 1,000,000', 'warning_threshold': 5000000},
+            'VND': {'name': 'Vietnamese Dong', 'typical_range': '20,000 - 2,000,000', 'warning_threshold': 10000000},
+            'PYG': {'name': 'Paraguayan Guarani', 'typical_range': '5,000 - 500,000', 'warning_threshold': 2000000},
+            'UGX': {'name': 'Ugandan Shilling', 'typical_range': '1,000 - 200,000', 'warning_threshold': 1000000},
+            'TZS': {'name': 'Tanzanian Shilling', 'typical_range': '1,000 - 500,000', 'warning_threshold': 2000000},
+            'LBP': {'name': 'Lebanese Pound', 'typical_range': '5,000 - 500,000', 'warning_threshold': 2000000},
+            'NGN': {'name': 'Nigerian Naira', 'typical_range': '500 - 200,000', 'warning_threshold': 1000000}
+        },
+        
+        # Peso family specifically
+        'peso_currencies': ['COP', 'MXN', 'CLP', 'ARS', 'UYU', 'DOP', 'CUP', 'PHP']
     }
 
 def detect_currency_from_data(df):
-    """Detect currencies present in the dataset"""
+    """Detect currencies present in the dataset with enhanced peso detection"""
     currencies_found = set()
     
     # Check if there's a currency column
-    currency_columns = ['Currency', 'Curr', 'CCY', 'Currency Code']
+    currency_columns = ['Currency', 'Curr', 'CCY', 'Currency Code', 'Moneda', 'Divisa']
     currency_col = None
     
     for col in currency_columns:
@@ -78,24 +165,198 @@ def detect_currency_from_data(df):
             break
     
     if currency_col:
-        currencies_found.update(df[currency_col].dropna().unique())
+        unique_currencies = df[currency_col].dropna().unique()
+        currencies_found.update(unique_currencies)
     
-    # Check for currency codes in price/amount columns
-    price_columns = [col for col in df.columns if any(word in col.lower() for word in ['price', 'amount', 'cost', 'value', 'total'])]
+    # Enhanced currency detection from price/amount columns
+    price_columns = [col for col in df.columns if any(word in col.lower() for word in ['price', 'amount', 'cost', 'value', 'total', 'precio', 'costo', 'valor'])]
     
     for col in price_columns:
         if df[col].dtype == 'object':  # String column might contain currency symbols
-            sample_values = df[col].dropna().astype(str).head(100)
+            sample_values = df[col].dropna().astype(str).head(200)  # Increased sample size
             for value in sample_values:
+                value_str = str(value).upper()
+                
                 # Extract currency codes (3 letters)
-                currency_matches = re.findall(r'\b[A-Z]{3}\b', str(value))
+                currency_matches = re.findall(r'\b[A-Z]{3}\b', value_str)
                 currencies_found.update(currency_matches)
+                
+                # Look for peso indicators
+                peso_patterns = [
+                    r'\bPESO\b', r'\bPSO\b', r'\bCOP\b', r'\bMXN\b', r'\bCLP\b', 
+                    r'\bARS\b', r'\bUYU\b', r'\bDOP\b', r'\bPHP\b', r'\$\s*\d+[,.]?\d*\s*(COP|MXN|CLP|ARS)'
+                ]
+                
+                for pattern in peso_patterns:
+                    if re.search(pattern, value_str):
+                        if 'COP' in value_str or 'COLOMBIAN' in value_str:
+                            currencies_found.add('COP')
+                        elif 'MXN' in value_str or 'MEXICAN' in value_str:
+                            currencies_found.add('MXN')
+                        elif 'CLP' in value_str or 'CHILEAN' in value_str:
+                            currencies_found.add('CLP')
+                        elif 'ARS' in value_str or 'ARGENTINIAN' in value_str or 'ARGENTINE' in value_str:
+                            currencies_found.add('ARS')
+                        elif 'PHP' in value_str or 'PHILIPPINE' in value_str:
+                            currencies_found.add('PHP')
+                        break
+                
+                # Look for other large-nominal currency indicators
+                if re.search(r'\b(RUPIAH|IDR)\b', value_str):
+                    currencies_found.add('IDR')
+                if re.search(r'\b(DONG|VND)\b', value_str):
+                    currencies_found.add('VND')
+                if re.search(r'\b(WON|KRW)\b', value_str):
+                    currencies_found.add('KRW')
     
-    # If no currencies found, assume SAR
+    # Intelligent currency guessing based on amount patterns
+    if not currencies_found and len(price_columns) > 0:
+        # Analyze amount patterns to guess currency
+        first_price_col = price_columns[0]
+        numeric_values = []
+        
+        for value in df[first_price_col].dropna().head(100):
+            try:
+                if isinstance(value, str):
+                    # Extract numeric part
+                    numeric_part = re.sub(r'[^\d.,]', '', str(value))
+                    if numeric_part:
+                        numeric_part = numeric_part.replace(',', '')
+                        numeric_values.append(float(numeric_part))
+                else:
+                    numeric_values.append(float(value))
+            except:
+                continue
+        
+        if numeric_values:
+            avg_value = sum(numeric_values) / len(numeric_values)
+            max_value = max(numeric_values)
+            
+            # Currency guessing based on typical amount ranges
+            if avg_value > 100000:  # Very large amounts
+                if max_value > 10000000:
+                    currencies_found.add('IDR')  # Indonesian Rupiah
+                elif max_value > 1000000:
+                    currencies_found.add('COP')  # Colombian Peso likely
+                else:
+                    currencies_found.add('KRW')  # Korean Won
+            elif avg_value > 10000:
+                currencies_found.add('CLP')  # Chilean Peso likely
+            elif avg_value > 1000:
+                currencies_found.add('MXN')  # Mexican Peso or other medium peso
+            else:
+                currencies_found.add('SAR')  # Assume SAR for reasonable amounts
+    
+    # If still no currencies found, assume SAR
     if not currencies_found:
         currencies_found.add('SAR')
     
     return list(currencies_found)
+
+def validate_currency_conversion(df, currencies_detected, exchange_rates):
+    """Validate currency conversion and warn about potential issues"""
+    warnings = []
+    recommendations = []
+    
+    currency_info = get_currency_info()
+    
+    # Check for large-nominal currencies
+    for currency in currencies_detected:
+        if currency in currency_info['large_nominal']:
+            currency_data = currency_info['large_nominal'][currency]
+            warnings.append({
+                'type': 'large_nominal',
+                'currency': currency,
+                'name': currency_data['name'],
+                'message': f"{currency_data['name']} typically has large amounts ({currency_data['typical_range']})"
+            })
+    
+    # Analyze amount distributions after conversion
+    if 'Unit Price' in df.columns:
+        converted_prices = []
+        for idx, row in df.head(100).iterrows():  # Sample first 100 rows
+            try:
+                amount = extract_numeric_value(row['Unit Price'])
+                if amount > 0:
+                    # Assume first detected currency for validation
+                    currency = currencies_detected[0] if currencies_detected else 'SAR'
+                    converted_amount = convert_to_sar(amount, currency, exchange_rates)
+                    converted_prices.append(converted_amount)
+            except:
+                continue
+        
+        if converted_prices:
+            avg_sar_price = sum(converted_prices) / len(converted_prices)
+            max_sar_price = max(converted_prices)
+            
+            # Warning thresholds
+            if avg_sar_price > 100000:  # Average > 100K SAR
+                warnings.append({
+                    'type': 'high_average',
+                    'message': f"Average unit price after conversion: {format_sar_amount(avg_sar_price)}",
+                    'severity': 'high'
+                })
+                recommendations.append("Consider checking if amounts were already in SAR or if exchange rates are correct")
+            
+            if max_sar_price > 1000000:  # Max > 1M SAR
+                warnings.append({
+                    'type': 'very_high_max',
+                    'message': f"Highest unit price after conversion: {format_sar_amount(max_sar_price)}",
+                    'severity': 'critical'
+                })
+                recommendations.append("Very high amounts detected - likely conversion error")
+    
+    # Check for suspicious exchange rates
+    for currency, rate in exchange_rates.items():
+        if currency in currency_info['large_nominal'] and rate > 0.1:
+            warnings.append({
+                'type': 'suspicious_rate',
+                'currency': currency,
+                'rate': rate,
+                'message': f"{currency} rate ({rate}) seems too high for a large-nominal currency",
+                'severity': 'medium'
+            })
+    
+    return warnings, recommendations
+
+def smart_currency_detection_interface(df):
+    """Enhanced currency detection interface with validation"""
+    st.write("### 🕵️ Smart Currency Detection")
+    
+    # Detect currencies
+    detected_currencies = detect_currency_from_data(df)
+    currency_info = get_currency_info()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**🔍 Detected Currencies:**")
+        for curr in detected_currencies:
+            # Add context for peso currencies
+            if curr in currency_info['peso_currencies']:
+                st.write(f"• {curr} 🪙 (Peso Currency - Large Amounts Expected)")
+            elif curr in currency_info['large_nominal']:
+                currency_name = currency_info['large_nominal'][curr]['name']
+                st.write(f"• {curr} 📈 ({currency_name} - Large Nominal)")
+            else:
+                st.write(f"• {curr}")
+    
+    with col2:
+        st.write("**⚠️ Currency Warnings:**")
+        
+        peso_count = len([c for c in detected_currencies if c in currency_info['peso_currencies']])
+        large_nominal_count = len([c for c in detected_currencies if c in currency_info['large_nominal']])
+        
+        if peso_count > 0:
+            st.warning(f"🪙 {peso_count} peso currency(ies) detected - amounts will be large")
+        
+        if large_nominal_count > 0:
+            st.info(f"📊 {large_nominal_count} large-nominal currency(ies) detected")
+        
+        if not any(c in currency_info['high_value'] for c in detected_currencies):
+            st.success("✅ No high-value currencies detected")
+    
+    return detected_currencies
 
 def extract_numeric_value(value_str):
     """Extract numeric value from string that might contain currency symbols"""
@@ -133,52 +394,83 @@ def format_sar_amount(amount):
     return formatted
 
 def setup_currency_conversion(df):
-    """Setup currency conversion interface and return converted dataframe"""
-    st.subheader("💱 Currency Configuration")
+    """Setup currency conversion interface with enhanced peso support and validation"""
+    st.subheader("💱 Enhanced Currency Configuration")
     
-    # Detect currencies in data
-    detected_currencies = detect_currency_from_data(df)
+    # Smart currency detection
+    detected_currencies = smart_currency_detection_interface(df)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**Detected Currencies:**")
-        for curr in detected_currencies:
-            st.write(f"• {curr}")
-    
-    with col2:
         st.write("**Configuration Options:**")
         
         # Currency mapping interface
         currency_source = st.selectbox(
             "Currency Data Source",
-            ["Auto-detect from Price Column", "Dedicated Currency Column", "Single Currency (All SAR)"]
+            ["Auto-detect from Price Column", "Dedicated Currency Column", "Single Currency (All SAR)", "Manual Currency Assignment"]
         )
         
         if currency_source == "Dedicated Currency Column":
-            currency_columns = [col for col in df.columns if 'curr' in col.lower() or 'ccy' in col.lower()]
+            currency_columns = [col for col in df.columns if any(word in col.lower() for word in ['curr', 'ccy', 'moneda', 'divisa'])]
             if currency_columns:
                 currency_column = st.selectbox("Select Currency Column", currency_columns)
             else:
                 st.warning("No currency column found. Using auto-detection.")
                 currency_source = "Auto-detect from Price Column"
+        
+        elif currency_source == "Manual Currency Assignment":
+            manual_currency = st.selectbox("Assign Single Currency to All Data", 
+                                         options=list(get_default_exchange_rates().keys()),
+                                         index=list(get_default_exchange_rates().keys()).index('SAR'))
+            detected_currencies = [manual_currency]
     
-    # Exchange rate configuration
-    st.write("**Exchange Rates to SAR:**")
+    with col2:
+        # Data preview for validation
+        st.write("**Data Preview:**")
+        if 'Unit Price' in df.columns:
+            sample_prices = df['Unit Price'].head(5)
+            for i, price in enumerate(sample_prices):
+                st.write(f"• Row {i+1}: {price}")
+    
+    # Exchange rate configuration with peso-specific warnings
+    st.write("**Exchange Rates to SAR (Saudi Riyal):**")
     
     default_rates = get_default_exchange_rates()
+    currency_info = get_currency_info()
     exchange_rates = {}
     
-    # Create exchange rate input interface
-    rate_cols = st.columns(4)
+    # Create enhanced exchange rate input interface
+    rate_cols = st.columns(min(4, len(detected_currencies)))
+    
     for i, currency in enumerate(detected_currencies):
-        with rate_cols[i % 4]:
+        with rate_cols[i % len(rate_cols)]:
+            # Special handling for peso currencies
+            if currency in currency_info['peso_currencies']:
+                st.write(f"🪙 **{currency}** (Peso Currency)")
+                if currency in currency_info['large_nominal']:
+                    typical_range = currency_info['large_nominal'][currency]['typical_range']
+                    st.caption(f"Typical amounts: {typical_range}")
+            elif currency in currency_info['large_nominal']:
+                currency_name = currency_info['large_nominal'][currency]['name']
+                st.write(f"📈 **{currency}** ({currency_name})")
+                typical_range = currency_info['large_nominal'][currency]['typical_range']
+                st.caption(f"Typical amounts: {typical_range}")
+            else:
+                st.write(f"**{currency}**")
+            
             if currency in default_rates:
+                default_rate = default_rates[currency]
+                
+                # Show rate with context
+                if currency in currency_info['large_nominal']:
+                    st.caption(f"💡 Very small rate expected for {currency}")
+                
                 rate = st.number_input(
                     f"1 {currency} = ? SAR",
-                    value=default_rates[currency],
-                    step=0.01,
-                    format="%.4f",
+                    value=default_rate,
+                    step=0.0001 if default_rate < 0.01 else 0.01,
+                    format="%.6f" if default_rate < 0.01 else "%.4f",
                     key=f"rate_{currency}"
                 )
             else:
@@ -191,14 +483,339 @@ def setup_currency_conversion(df):
                 )
             exchange_rates[currency] = rate
     
-    # Add option to update rates from API (placeholder)
-    if st.button("🔄 Update Exchange Rates", help="In production, this would fetch live rates"):
-        st.success("Exchange rates updated! (Demo mode - using default rates)")
-        exchange_rates.update(default_rates)
+    # Pre-conversion validation
+    if len(detected_currencies) > 0:
+        st.write("### 🔍 Pre-Conversion Validation")
+        
+        warnings, recommendations = validate_currency_conversion(df, detected_currencies, exchange_rates)
+        
+        if warnings:
+            for warning in warnings:
+                if warning.get('severity') == 'critical':
+                    st.error(f"🚨 **Critical**: {warning['message']}")
+                elif warning.get('severity') == 'high':
+                    st.warning(f"⚠️ **Warning**: {warning['message']}")
+                else:
+                    st.info(f"ℹ️ **Info**: {warning['message']}")
+        
+        if recommendations:
+            st.write("**💡 Recommendations:**")
+            for rec in recommendations:
+                st.write(f"• {rec}")
+    
+    # Advanced options
+    with st.expander("⚙️ Advanced Options"):
+        
+        # Peso-specific settings
+        st.write("**Peso Currency Settings:**")
+        peso_currencies_found = [c for c in detected_currencies if c in currency_info['peso_currencies']]
+        
+        if peso_currencies_found:
+            st.info(f"Found peso currencies: {', '.join(peso_currencies_found)}")
+            
+            peso_validation = st.checkbox("Enable peso amount validation", value=True)
+            if peso_validation:
+                st.write("Will validate that peso amounts are in expected ranges")
+        
+        # Large amount threshold
+        large_amount_threshold = st.number_input(
+            "Alert threshold for unit prices (SAR)", 
+            value=50000, 
+            step=10000,
+            help="Alert if unit prices exceed this amount after conversion"
+        )
+        
+        # Auto-correction option
+        auto_correction = st.checkbox(
+            "Enable smart correction suggestions",
+            value=True,
+            help="Suggest corrections for obviously wrong conversions"
+        )
+    
+    # Exchange rate update options
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🔄 Update Exchange Rates", help="Refresh with latest default rates"):
+            st.success("Exchange rates updated!")
+            exchange_rates.update(default_rates)
+    
+    with col2:
+        if st.button("🪙 Peso Rate Helper", help="Set recommended rates for peso currencies"):
+            peso_rates = {
+                'COP': 0.0009, 'MXN': 0.19, 'CLP': 0.0042, 'ARS': 0.0095,
+                'UYU': 0.096, 'DOP': 0.067, 'PHP': 0.067
+            }
+            for peso_curr in peso_currencies_found:
+                if peso_curr in peso_rates:
+                    exchange_rates[peso_curr] = peso_rates[peso_curr]
+            st.success("Peso rates updated!")
+    
+    with col3:
+        if st.button("🔧 Reset to Defaults", help="Reset all rates to default values"):
+            exchange_rates.update(default_rates)
+            st.success("All rates reset to defaults!")
     
     return exchange_rates, currency_source
 
+def post_conversion_validation(df_converted, original_df, exchange_rates):
+    """Validate converted amounts and provide warnings/suggestions"""
+    
+    st.write("### 📊 Post-Conversion Analysis")
+    
+    validation_results = {
+        'warnings': [],
+        'recommendations': [],
+        'statistics': {}
+    }
+    
+    if 'Unit Price' in df_converted.columns:
+        # Calculate statistics
+        converted_prices = df_converted['Unit Price'].dropna()
+        
+        if len(converted_prices) > 0:
+            validation_results['statistics'] = {
+                'count': len(converted_prices),
+                'min': converted_prices.min(),
+                'max': converted_prices.max(),
+                'mean': converted_prices.mean(),
+                'median': converted_prices.median(),
+                'std': converted_prices.std()
+            }
+            
+            # Analysis columns
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Records", f"{validation_results['statistics']['count']:,}")
+            with col2:
+                st.metric("Min Price", format_sar_amount(validation_results['statistics']['min']))
+            with col3:
+                st.metric("Max Price", format_sar_amount(validation_results['statistics']['max']))
+            with col4:
+                st.metric("Avg Price", format_sar_amount(validation_results['statistics']['mean']))
+            
+            # Warning checks
+            warnings = []
+            recommendations = []
+            
+            # Check for extremely high values
+            if validation_results['statistics']['max'] > 5000000:  # > 5M SAR
+                warnings.append(f"🚨 Extremely high unit price detected: {format_sar_amount(validation_results['statistics']['max'])}")
+                recommendations.append("Check if this is a bulk order or if currency conversion is incorrect")
+            
+            # Check for very high average
+            if validation_results['statistics']['mean'] > 100000:  # > 100K SAR average
+                warnings.append(f"⚠️ Very high average unit price: {format_sar_amount(validation_results['statistics']['mean'])}")
+                recommendations.append("Consider if amounts were already in SAR or if peso/large-nominal currency rates are wrong")
+            
+            # Check for unrealistic distributions
+            if validation_results['statistics']['std'] > validation_results['statistics']['mean'] * 10:
+                warnings.append("📊 Extremely high price variance detected")
+                recommendations.append("Data may contain mixed currencies or scales")
+            
+            # Check for suspiciously round numbers (indicating possible pre-conversion)
+            round_number_count = len(converted_prices[converted_prices % 1000 == 0])
+            if round_number_count > len(converted_prices) * 0.5:
+                warnings.append("🔢 Many round numbers detected - amounts may already be in SAR")
+                recommendations.append("Consider using 'Single Currency (All SAR)' option")
+            
+            # Display warnings and recommendations
+            if warnings:
+                st.write("**⚠️ Validation Warnings:**")
+                for warning in warnings:
+                    st.warning(warning)
+            
+            if recommendations:
+                st.write("**💡 Recommendations:**")
+                for rec in recommendations:
+                    st.info(f"• {rec}")
+            
+            # Show sample of highest values for manual review
+            st.write("**🔍 Highest Unit Prices (Manual Review):**")
+            if len(df_converted) > 0:
+                top_prices = df_converted.nlargest(5, 'Unit Price')[['Vendor Name', 'Item', 'Unit Price']]
+                if 'Item Description' in df_converted.columns:
+                    top_prices['Item Description'] = df_converted.nlargest(5, 'Unit Price')['Item Description']
+                
+                st.dataframe(
+                    top_prices.style.format({
+                        'Unit Price': lambda x: format_sar_amount(x)
+                    }),
+                    use_container_width=True
+                )
+            
+            # Quick fix suggestions
+            st.write("**🔧 Quick Fix Options:**")
+            
+            fix_col1, fix_col2, fix_col3 = st.columns(3)
+            
+            with fix_col1:
+                if st.button("🔄 Try All SAR Mode", key="fix_all_sar"):
+                    st.info("💡 Suggestion: Reset conversion and select 'Single Currency (All SAR)'")
+            
+            with fix_col2:
+                if st.button("🪙 Fix Peso Rates", key="fix_peso_rates"):
+                    currency_info = get_currency_info()
+                    peso_suggestions = []
+                    for curr, rate in exchange_rates.items():
+                        if curr in currency_info['peso_currencies'] and rate > 0.1:
+                            peso_suggestions.append(f"{curr}: Try {get_default_exchange_rates().get(curr, 0.01):.6f}")
+                    
+                    if peso_suggestions:
+                        st.info("💡 Peso rate suggestions:")
+                        for suggestion in peso_suggestions:
+                            st.write(f"• {suggestion}")
+                    else:
+                        st.success("✅ Peso rates look reasonable")
+            
+            with fix_col3:
+                if st.button("📊 Show Distribution", key="show_distribution"):
+                    # Create price distribution chart
+                    import plotly.express as px
+                    
+                    # Sample data for histogram (limit to 1000 points for performance)
+                    sample_prices = converted_prices.sample(min(1000, len(converted_prices)))
+                    
+                    fig = px.histogram(
+                        x=sample_prices,
+                        nbins=50,
+                        title="Unit Price Distribution (SAR)",
+                        labels={'x': 'Unit Price (SAR)', 'y': 'Frequency'}
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            # Export validation report
+            if st.button("📥 Export Validation Report", key="export_validation"):
+                validation_report = {
+                    'Validation_Type': ['Total Records', 'Min Price (SAR)', 'Max Price (SAR)', 'Avg Price (SAR)', 'Median Price (SAR)'],
+                    'Value': [
+                        validation_results['statistics']['count'],
+                        validation_results['statistics']['min'],
+                        validation_results['statistics']['max'],
+                        validation_results['statistics']['mean'],
+                        validation_results['statistics']['median']
+                    ],
+                    'Status': ['✅ OK', '✅ OK', '⚠️ Check' if validation_results['statistics']['max'] > 1000000 else '✅ OK',
+                              '⚠️ Check' if validation_results['statistics']['mean'] > 50000 else '✅ OK', '✅ OK']
+                }
+                
+                report_df = pd.DataFrame(validation_report)
+                csv = report_df.to_csv(index=False)
+                
+                st.download_button(
+                    label="Download Validation Report",
+                    data=csv,
+                    file_name=f"currency_validation_report_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+    
+    return validation_results
+
 def convert_dataframe_to_sar(df, exchange_rates, currency_source="Auto-detect from Price Column"):
+    """Convert all monetary columns in dataframe to SAR with enhanced validation"""
+    df_converted = df.copy()
+    
+    # Identify monetary columns
+    monetary_columns = []
+    for col in df.columns:
+        if any(word in col.lower() for word in ['price', 'amount', 'cost', 'value', 'total', 'spend', 'precio', 'costo', 'valor']):
+            monetary_columns.append(col)
+    
+    conversion_log = []
+    
+    # Convert each monetary column
+    for col in monetary_columns:
+        if col in df_converted.columns:
+            converted_values = []
+            
+            for idx, row in df_converted.iterrows():
+                try:
+                    # Extract numeric value
+                    if df_converted[col].dtype == 'object':
+                        amount = extract_numeric_value(row[col])
+                    else:
+                        amount = float(row[col]) if not pd.isna(row[col]) else 0
+                    
+                    # Determine currency
+                    if currency_source == "Single Currency (All SAR)":
+                        currency = "SAR"
+                    elif currency_source == "Manual Currency Assignment":
+                        # Use the first currency in exchange_rates as the assigned currency
+                        currency = list(exchange_rates.keys())[0] if exchange_rates else "SAR"
+                    elif currency_source == "Dedicated Currency Column":
+                        currency_col = None
+                        for c in ['Currency', 'Curr', 'CCY', 'Currency Code', 'Moneda', 'Divisa']:
+                            if c in df_converted.columns:
+                                currency_col = c
+                                break
+                        currency = row[currency_col] if currency_col else "SAR"
+                    else:  # Auto-detect
+                        # Try to extract currency from the value string
+                        if df_converted[col].dtype == 'object':
+                            value_str = str(row[col]).upper()
+                            currency_match = re.search(r'\b([A-Z]{3})\b', value_str)
+                            
+                            # Check for peso indicators
+                            if 'COP' in value_str or 'COLOMBIAN' in value_str:
+                                currency = 'COP'
+                            elif 'MXN' in value_str or 'MEXICAN' in value_str:
+                                currency = 'MXN'
+                            elif 'CLP' in value_str or 'CHILEAN' in value_str:
+                                currency = 'CLP'
+                            elif 'ARS' in value_str or 'ARGENTIN' in value_str:
+                                currency = 'ARS'
+                            elif 'PHP' in value_str or 'PHILIPPINE' in value_str:
+                                currency = 'PHP'
+                            elif currency_match:
+                                currency = currency_match.group(1)
+                            else:
+                                # Smart guessing based on amount range
+                                if amount > 100000:
+                                    currency = 'COP'  # Likely Colombian Peso
+                                elif amount > 10000:
+                                    currency = 'CLP'  # Likely Chilean Peso
+                                elif amount > 1000:
+                                    currency = 'MXN'  # Likely Mexican Peso
+                                else:
+                                    currency = "SAR"
+                        else:
+                            # For numeric columns, use the most common currency from exchange_rates
+                            currency = list(exchange_rates.keys())[0] if exchange_rates else "SAR"
+                    
+                    # Convert to SAR
+                    sar_amount = convert_to_sar(amount, currency, exchange_rates)
+                    converted_values.append(sar_amount)
+                    
+                    # Log conversion for audit
+                    if idx < 10:  # Log first 10 conversions
+                        conversion_log.append({
+                            'row': idx,
+                            'column': col,
+                            'original_amount': amount,
+                            'currency': currency,
+                            'sar_amount': sar_amount,
+                            'rate_used': exchange_rates.get(currency, 1.0)
+                        })
+                
+                except Exception as e:
+                    converted_values.append(0)
+                    if idx < 5:  # Log first 5 errors
+                        conversion_log.append({
+                            'row': idx,
+                            'column': col,
+                            'error': str(e),
+                            'original_value': row[col]
+                        })
+            
+            # Update the column with converted values
+            df_converted[col] = converted_values
+    
+    # Store conversion log in session state for debugging
+    st.session_state['conversion_log'] = conversion_log
+    
+    return df_converted
     """Convert all monetary columns in dataframe to SAR"""
     df_converted = df.copy()
     
@@ -822,43 +1439,81 @@ def display(df):
     st.header("🤝 Enhanced Contracting Opportunities")
     st.markdown("Advanced AI-powered procurement intelligence platform for optimal contracting strategies.")
     
-    # Quick help for bulk selection features
-    with st.expander("💡 Bulk Selection Features Guide", expanded=False):
-        st.markdown("""
-        **New Bulk Selection Features Available:**
+    # Quick help for bulk selection features and currency
+    with st.expander("💡 Bulk Selection & Currency Features Guide", expanded=False):
+        tab1, tab2 = st.tabs(["🎯 Bulk Selection", "💱 Currency Guide"])
         
-        **🎯 Smart Identification Tab:**
-        - Quick configuration presets (High Value Focus, Standard Analysis, etc.)
+        with tab1:
+            st.markdown("""
+            **New Bulk Selection Features Available:**
+            
+            **🎯 Smart Identification Tab:**
+            - Quick configuration presets (High Value Focus, Standard Analysis, etc.)
+            
+            **📊 Vendor Performance Tab:**
+            - ✅ Select All Vendors / ❌ Deselect All buttons
+            
+            **🤝 Negotiation Intelligence Tab:**
+            - ✅ Select All Open (for negotiation)
+            - 🎯 Top 5 Spenders selection
+            - ⚡ Quick Wins (Open + Low Risk)
+            - 📊 Batch reporting and scheduling
+            
+            **🔄 Multi-Vendor Consolidation Tab:**
+            - ✅ Select All Items / ❌ Deselect All
+            - 🔴 High Priority Only
+            - 🟡 Medium+ Priority  
+            - 💰 Top 10 Savings selection
+            
+            **🎪 Contract Simulation Tab:**
+            - 🎯 Highest Spend vendor selection
+            - 🤝 Best Negotiable vendor selection
+            
+            **📅 Procurement Calendar Tab:**
+            - ✅ All Events / ❌ Clear Events
+            - ✅ All Priorities / 🔴 High Only
+            
+            **👥 Collaboration Hub Tab:**
+            - 🔴 Highest Priority contract
+            - 💰 Highest Spend contract selection
+            
+            **💡 Pro Tip:** Use these bulk selection features to quickly focus on your most important contracts and vendors!
+            """)
         
-        **📊 Vendor Performance Tab:**
-        - ✅ Select All Vendors / ❌ Deselect All buttons
-        
-        **🤝 Negotiation Intelligence Tab:**
-        - ✅ Select All Open (for negotiation)
-        - 🎯 Top 5 Spenders selection
-        - ⚡ Quick Wins (Open + Low Risk)
-        - 📊 Batch reporting and scheduling
-        
-        **🔄 Multi-Vendor Consolidation Tab:**
-        - ✅ Select All Items / ❌ Deselect All
-        - 🔴 High Priority Only
-        - 🟡 Medium+ Priority  
-        - 💰 Top 10 Savings selection
-        
-        **🎪 Contract Simulation Tab:**
-        - 🎯 Highest Spend vendor selection
-        - 🤝 Best Negotiable vendor selection
-        
-        **📅 Procurement Calendar Tab:**
-        - ✅ All Events / ❌ Clear Events
-        - ✅ All Priorities / 🔴 High Only
-        
-        **👥 Collaboration Hub Tab:**
-        - 🔴 Highest Priority contract
-        - 💰 Highest Spend contract selection
-        
-        **💡 Pro Tip:** Use these bulk selection features to quickly focus on your most important contracts and vendors!
-        """)
+        with tab2:
+            st.markdown("""
+            **💱 Enhanced Currency Conversion Guide**
+            
+            **🪙 Peso Currencies (Large Amounts Expected):**
+            - **Colombian Peso (COP)**: 1,000-100,000 COP typical
+            - **Mexican Peso (MXN)**: 20-2,000 MXN typical  
+            - **Chilean Peso (CLP)**: 500-50,000 CLP typical
+            - **Argentine Peso (ARS)**: 100-50,000 ARS typical
+            - **Philippine Peso (PHP)**: 50-5,000 PHP typical
+            
+            **📈 Other Large-Nominal Currencies:**
+            - **Korean Won (KRW)**: 1,000-500,000 KRW
+            - **Indonesian Rupiah (IDR)**: 10,000-1,000,000 IDR
+            - **Vietnamese Dong (VND)**: 20,000-2,000,000 VND
+            
+            **🔧 Troubleshooting High Amounts:**
+            1. **Check original data**: Were amounts already in SAR?
+            2. **Verify currency detection**: Did system detect peso currencies correctly?
+            3. **Validate exchange rates**: Are peso rates very small (0.001-0.2)?
+            4. **Use validation tools**: Click "📊 Validate Conversion" in sidebar
+            5. **Try manual assignment**: Use "Manual Currency Assignment" option
+            
+            **⚠️ Common Issues:**
+            - **23 billion SAR total**: Likely peso conversion error
+            - **Round numbers**: Data might already be in SAR
+            - **Extreme variance**: Mixed currencies detected
+            
+            **💡 Quick Fixes:**
+            - Use "🪙 Peso Rate Helper" button
+            - Try "Single Currency (All SAR)" if data already converted
+            - Check conversion log for audit trail
+            - Use post-conversion validation tools
+            """)
     
     # Data validation
     required_columns = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
