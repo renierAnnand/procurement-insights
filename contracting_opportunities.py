@@ -12,11 +12,25 @@ def calculate_vendor_performance_score(vendor_data):
     """Calculate comprehensive vendor performance score"""
     metrics = {}
     
+    # Ensure vendor_data is a DataFrame
+    if not isinstance(vendor_data, pd.DataFrame) or len(vendor_data) == 0:
+        return {
+            'overall_score': 0.5,
+            'volume_consistency': 0.5,
+            'price_stability': 0.5,
+            'lead_time_consistency': 0.5,
+            'delivery_performance': 0.5,
+            'quality_score': 0.5
+        }
+    
     # Volume consistency (coefficient of variation of monthly orders)
-    monthly_orders = vendor_data.groupby(vendor_data['Creation Date'].dt.to_period('M')).size()
-    if len(monthly_orders) > 1:
-        metrics['volume_consistency'] = 1 - (monthly_orders.std() / monthly_orders.mean()) if monthly_orders.mean() > 0 else 0
-    else:
+    try:
+        monthly_orders = vendor_data.groupby(vendor_data['Creation Date'].dt.to_period('M')).size()
+        if isinstance(monthly_orders, pd.Series) and len(monthly_orders) > 1:
+            metrics['volume_consistency'] = 1 - (monthly_orders.std() / monthly_orders.mean()) if monthly_orders.mean() > 0 else 0
+        else:
+            metrics['volume_consistency'] = 0
+    except:
         metrics['volume_consistency'] = 0
     
     # Price stability (1 - coefficient of variation of unit prices)
@@ -79,94 +93,159 @@ def calculate_vendor_performance_score(vendor_data):
 def calculate_negotiation_potential_index(vendor_data):
     """Calculate negotiation potential based on historical patterns"""
     
-    # Price variance over time (higher = more flexible)
-    price_variance = vendor_data['Unit Price'].std() / vendor_data['Unit Price'].mean() if vendor_data['Unit Price'].mean() > 0 else 0
-    price_flexibility = min(price_variance * 2, 1.0)  # Normalize to 0-1
+    # Ensure vendor_data is a DataFrame
+    if not isinstance(vendor_data, pd.DataFrame) or len(vendor_data) == 0:
+        return {
+            'negotiation_index': 0.5,
+            'negotiation_class': "Unknown",
+            'price_flexibility': 0.5,
+            'discount_behavior': 0,
+            'order_frequency_score': 0,
+            'volume_consistency': 0.5
+        }
     
-    # Discount behavior (if price has decreased over time)
-    if len(vendor_data) > 3:
-        recent_prices = vendor_data.nlargest(3, 'Creation Date')['Unit Price'].mean()
-        older_prices = vendor_data.nsmallest(3, 'Creation Date')['Unit Price'].mean()
-        discount_behavior = max(0, (older_prices - recent_prices) / older_prices) if older_prices > 0 else 0
-    else:
+    try:
+        # Price variance over time (higher = more flexible)
+        if 'Unit Price' in vendor_data.columns and len(vendor_data['Unit Price'].dropna()) > 0:
+            price_variance = vendor_data['Unit Price'].std() / vendor_data['Unit Price'].mean() if vendor_data['Unit Price'].mean() > 0 else 0
+            price_flexibility = min(price_variance * 2, 1.0)  # Normalize to 0-1
+        else:
+            price_flexibility = 0
+        
+        # Discount behavior (if price has decreased over time)
         discount_behavior = 0
+        if len(vendor_data) > 3:
+            try:
+                recent_prices = vendor_data.nlargest(3, 'Creation Date')['Unit Price'].mean()
+                older_prices = vendor_data.nsmallest(3, 'Creation Date')['Unit Price'].mean()
+                if older_prices > 0:
+                    discount_behavior = max(0, (older_prices - recent_prices) / older_prices)
+            except:
+                discount_behavior = 0
+        
+        # Order frequency (regular customers might get better treatment)
+        order_frequency_score = min(len(vendor_data) / 50, 1.0)  # Normalize to 0-1
+        
+        # Volume consistency (consistent buyers have more leverage)
+        if 'Qty Delivered' in vendor_data.columns and len(vendor_data['Qty Delivered'].dropna()) > 0:
+            qty_mean = vendor_data['Qty Delivered'].mean()
+            if qty_mean > 0:
+                volume_consistency = 1 - (vendor_data['Qty Delivered'].std() / qty_mean)
+                volume_consistency = max(0, min(volume_consistency, 1.0))
+            else:
+                volume_consistency = 0
+        else:
+            volume_consistency = 0
+        
+        # Combine metrics
+        negotiation_index = (
+            price_flexibility * 0.3 + 
+            discount_behavior * 0.3 + 
+            order_frequency_score * 0.2 + 
+            volume_consistency * 0.2
+        )
+        
+        # Classify negotiation potential
+        if negotiation_index >= 0.7:
+            negotiation_class = "Open to Negotiation"
+        elif negotiation_index >= 0.4:
+            negotiation_class = "Moderate"
+        else:
+            negotiation_class = "Rigid"
+        
+        return {
+            'negotiation_index': negotiation_index,
+            'negotiation_class': negotiation_class,
+            'price_flexibility': price_flexibility,
+            'discount_behavior': discount_behavior,
+            'order_frequency_score': order_frequency_score,
+            'volume_consistency': volume_consistency
+        }
     
-    # Order frequency (regular customers might get better treatment)
-    order_frequency_score = min(len(vendor_data) / 50, 1.0)  # Normalize to 0-1
-    
-    # Volume consistency (consistent buyers have more leverage)
-    volume_consistency = 1 - (vendor_data['Qty Delivered'].std() / vendor_data['Qty Delivered'].mean()) if vendor_data['Qty Delivered'].mean() > 0 else 0
-    volume_consistency = max(0, min(volume_consistency, 1.0))
-    
-    # Combine metrics
-    negotiation_index = (
-        price_flexibility * 0.3 + 
-        discount_behavior * 0.3 + 
-        order_frequency_score * 0.2 + 
-        volume_consistency * 0.2
-    )
-    
-    # Classify negotiation potential
-    if negotiation_index >= 0.7:
-        negotiation_class = "Open to Negotiation"
-    elif negotiation_index >= 0.4:
-        negotiation_class = "Moderate"
-    else:
-        negotiation_class = "Rigid"
-    
-    return {
-        'negotiation_index': negotiation_index,
-        'negotiation_class': negotiation_class,
-        'price_flexibility': price_flexibility,
-        'discount_behavior': discount_behavior,
-        'order_frequency_score': order_frequency_score,
-        'volume_consistency': volume_consistency
-    }
+    except Exception as e:
+        # Return default values in case of any error
+        return {
+            'negotiation_index': 0.5,
+            'negotiation_class': "Unknown",
+            'price_flexibility': 0.5,
+            'discount_behavior': 0,
+            'order_frequency_score': 0,
+            'volume_consistency': 0.5
+        }
 
 def calculate_supplier_risk_index(vendor_data):
     """Calculate supplier risk index"""
     
+    # Ensure vendor_data is a DataFrame
+    if not isinstance(vendor_data, pd.DataFrame) or len(vendor_data) == 0:
+        return {
+            'overall_risk': 0.5,
+            'risk_class': "Medium Risk",
+            'delivery_risk': 0.5,
+            'quality_risk': 0.1,
+            'price_volatility_risk': 0.5,
+            'continuity_risk': 0.5
+        }
+    
     risk_factors = {}
     
-    # Delivery reliability
-    if 'delivery_delay_days' in vendor_data.columns:
-        delays = vendor_data['delivery_delay_days'].dropna()
-        if len(delays) > 0:
-            on_time_rate = len(delays[delays <= 0]) / len(delays)
-            risk_factors['delivery_risk'] = 1 - on_time_rate
+    try:
+        # Delivery reliability
+        if 'delivery_delay_days' in vendor_data.columns:
+            delays = vendor_data['delivery_delay_days'].dropna()
+            if isinstance(delays, pd.Series) and len(delays) > 0:
+                on_time_rate = len(delays[delays <= 0]) / len(delays)
+                risk_factors['delivery_risk'] = 1 - on_time_rate
+            else:
+                risk_factors['delivery_risk'] = 0.5
         else:
             risk_factors['delivery_risk'] = 0.5
-    else:
+    except:
         risk_factors['delivery_risk'] = 0.5
     
-    # Quality risk
-    if 'Qty Rejected' in vendor_data.columns and 'Qty Delivered' in vendor_data.columns:
-        total_delivered = vendor_data['Qty Delivered'].sum()
-        total_rejected = vendor_data['Qty Rejected'].sum()
-        if total_delivered > 0:
-            rejection_rate = total_rejected / (total_delivered + total_rejected)
-            risk_factors['quality_risk'] = rejection_rate
+    try:
+        # Quality risk
+        if 'Qty Rejected' in vendor_data.columns and 'Qty Delivered' in vendor_data.columns:
+            total_delivered = vendor_data['Qty Delivered'].sum()
+            total_rejected = vendor_data['Qty Rejected'].sum()
+            if total_delivered > 0:
+                rejection_rate = total_rejected / (total_delivered + total_rejected)
+                risk_factors['quality_risk'] = rejection_rate
+            else:
+                risk_factors['quality_risk'] = 0.1
         else:
             risk_factors['quality_risk'] = 0.1
-    else:
+    except:
         risk_factors['quality_risk'] = 0.1
     
-    # Price volatility risk
-    price_cv = vendor_data['Unit Price'].std() / vendor_data['Unit Price'].mean() if vendor_data['Unit Price'].mean() > 0 else 0
-    risk_factors['price_volatility_risk'] = min(price_cv, 1.0)
-    
-    # Supply continuity risk (based on order gaps)
-    if len(vendor_data) > 1:
-        vendor_data_sorted = vendor_data.sort_values('Creation Date')
-        date_gaps = vendor_data_sorted['Creation Date'].diff().dt.days.dropna()
-        avg_gap = date_gaps.mean()
-        max_gap = date_gaps.max()
-        if avg_gap > 0:
-            continuity_risk = min((max_gap - avg_gap) / avg_gap, 1.0) if avg_gap > 0 else 0
+    try:
+        # Price volatility risk
+        if 'Unit Price' in vendor_data.columns and len(vendor_data['Unit Price'].dropna()) > 0:
+            price_cv = vendor_data['Unit Price'].std() / vendor_data['Unit Price'].mean() if vendor_data['Unit Price'].mean() > 0 else 0
+            risk_factors['price_volatility_risk'] = min(price_cv, 1.0)
         else:
-            continuity_risk = 0
-        risk_factors['continuity_risk'] = max(0, continuity_risk)
-    else:
+            risk_factors['price_volatility_risk'] = 0.5
+    except:
+        risk_factors['price_volatility_risk'] = 0.5
+    
+    try:
+        # Supply continuity risk (based on order gaps)
+        if len(vendor_data) > 1:
+            vendor_data_sorted = vendor_data.sort_values('Creation Date')
+            date_gaps = vendor_data_sorted['Creation Date'].diff().dt.days.dropna()
+            if len(date_gaps) > 0:
+                avg_gap = date_gaps.mean()
+                max_gap = date_gaps.max()
+                if avg_gap > 0:
+                    continuity_risk = min((max_gap - avg_gap) / avg_gap, 1.0)
+                else:
+                    continuity_risk = 0
+                risk_factors['continuity_risk'] = max(0, continuity_risk)
+            else:
+                risk_factors['continuity_risk'] = 0.5
+        else:
+            risk_factors['continuity_risk'] = 0.5
+    except:
         risk_factors['continuity_risk'] = 0.5
     
     # Calculate overall risk index
@@ -363,45 +442,73 @@ def generate_procurement_calendar(opportunities_df, current_date=None):
 def analyze_contract_suitability(item_vendor_data, min_spend_threshold=10000, min_frequency_threshold=4):
     """Analyze suitability for contracting based on spend and frequency"""
     
-    # Calculate key metrics
-    total_spend = (item_vendor_data['Unit Price'] * item_vendor_data['Qty Delivered']).sum()
-    order_frequency = len(item_vendor_data)
+    # Ensure item_vendor_data is a DataFrame
+    if not isinstance(item_vendor_data, pd.DataFrame) or len(item_vendor_data) == 0:
+        return {
+            'total_spend': 0,
+            'order_frequency': 0,
+            'monthly_frequency': 0,
+            'demand_predictability': 0,
+            'suitability_score': 0,
+            'recommendation': "Not Suitable",
+            'months_span': 1
+        }
     
-    # Calculate time span
-    date_range = item_vendor_data['Creation Date'].max() - item_vendor_data['Creation Date'].min()
-    months_span = date_range.days / 30 if date_range.days > 0 else 1
-    monthly_frequency = order_frequency / months_span
+    try:
+        # Calculate key metrics
+        total_spend = (item_vendor_data['Unit Price'] * item_vendor_data['Qty Delivered']).sum()
+        order_frequency = len(item_vendor_data)
+        
+        # Calculate time span
+        date_range = item_vendor_data['Creation Date'].max() - item_vendor_data['Creation Date'].min()
+        months_span = max(date_range.days / 30, 1) if date_range.days > 0 else 1
+        monthly_frequency = order_frequency / months_span
+        
+        # Demand predictability
+        monthly_demand = item_vendor_data.groupby(item_vendor_data['Creation Date'].dt.to_period('M'))['Qty Delivered'].sum()
+        if isinstance(monthly_demand, pd.Series) and len(monthly_demand) > 1 and monthly_demand.mean() > 0:
+            demand_cv = monthly_demand.std() / monthly_demand.mean()
+            demand_predictability = max(0, 1 - demand_cv)
+        else:
+            demand_predictability = 0
+        
+        # Contract suitability score
+        spend_score = min(total_spend / min_spend_threshold, 1.0) if min_spend_threshold > 0 else 1.0
+        frequency_score = min(monthly_frequency / (min_frequency_threshold / 12), 1.0)
+        
+        suitability_score = (spend_score * 0.4 + frequency_score * 0.3 + demand_predictability * 0.3)
+        
+        # Contract recommendation
+        if suitability_score >= 0.7 and total_spend >= min_spend_threshold:
+            recommendation = "High Priority"
+        elif suitability_score >= 0.5 and total_spend >= min_spend_threshold * 0.5:
+            recommendation = "Medium Priority"
+        elif suitability_score >= 0.3:
+            recommendation = "Low Priority"
+        else:
+            recommendation = "Not Suitable"
+        
+        return {
+            'total_spend': total_spend,
+            'order_frequency': order_frequency,
+            'monthly_frequency': monthly_frequency,
+            'demand_predictability': demand_predictability,
+            'suitability_score': suitability_score,
+            'recommendation': recommendation,
+            'months_span': months_span
+        }
     
-    # Demand predictability
-    monthly_demand = item_vendor_data.groupby(item_vendor_data['Creation Date'].dt.to_period('M'))['Qty Delivered'].sum()
-    demand_cv = monthly_demand.std() / monthly_demand.mean() if len(monthly_demand) > 1 and monthly_demand.mean() > 0 else 1
-    demand_predictability = max(0, 1 - demand_cv)
-    
-    # Contract suitability score
-    spend_score = min(total_spend / min_spend_threshold, 1.0) if min_spend_threshold > 0 else 1.0
-    frequency_score = min(monthly_frequency / (min_frequency_threshold / 12), 1.0)
-    
-    suitability_score = (spend_score * 0.4 + frequency_score * 0.3 + demand_predictability * 0.3)
-    
-    # Contract recommendation
-    if suitability_score >= 0.7 and total_spend >= min_spend_threshold:
-        recommendation = "High Priority"
-    elif suitability_score >= 0.5 and total_spend >= min_spend_threshold * 0.5:
-        recommendation = "Medium Priority"
-    elif suitability_score >= 0.3:
-        recommendation = "Low Priority"
-    else:
-        recommendation = "Not Suitable"
-    
-    return {
-        'total_spend': total_spend,
-        'order_frequency': order_frequency,
-        'monthly_frequency': monthly_frequency,
-        'demand_predictability': demand_predictability,
-        'suitability_score': suitability_score,
-        'recommendation': recommendation,
-        'months_span': months_span
-    }
+    except Exception as e:
+        # Return default values in case of any error
+        return {
+            'total_spend': 0,
+            'order_frequency': 0,
+            'monthly_frequency': 0,
+            'demand_predictability': 0,
+            'suitability_score': 0,
+            'recommendation': "Not Suitable",
+            'months_span': 1
+        }
 
 def simulate_multi_year_contract(historical_data, contract_terms, years=3):
     """Simulate multi-year contract performance"""
@@ -519,37 +626,47 @@ def display(df):
                 vendor_item_combinations = analysis_df.groupby(['Vendor Name', 'Item'])
                 
                 for (vendor, item), group_data in vendor_item_combinations:
-                    suitability_analysis = analyze_contract_suitability(group_data, min_spend, min_frequency)
+                    try:
+                        # Ensure group_data is valid
+                        if not isinstance(group_data, pd.DataFrame) or len(group_data) == 0:
+                            continue
+                            
+                        suitability_analysis = analyze_contract_suitability(group_data, min_spend, min_frequency)
+                        
+                        if suitability_analysis['recommendation'] != "Not Suitable":
+                            vendor_performance = calculate_vendor_performance_score(group_data)
+                            negotiation_potential = calculate_negotiation_potential_index(group_data)
+                            risk_assessment = calculate_supplier_risk_index(group_data)
+                            contract_recommendation = recommend_contract_type(
+                                suitability_analysis, vendor_performance, negotiation_potential
+                            )
+                            
+                            item_desc = group_data['Item Description'].iloc[0] if 'Item Description' in group_data.columns else f"Item {item}"
+                            
+                            contract_opportunities.append({
+                                'Vendor Name': vendor,
+                                'Item': item,
+                                'Item Description': item_desc[:40] + "..." if len(str(item_desc)) > 40 else str(item_desc),
+                                'Annual Spend': suitability_analysis['total_spend'],
+                                'Order Frequency': suitability_analysis['order_frequency'],
+                                'Demand Predictability': suitability_analysis['demand_predictability'],
+                                'Vendor Performance': vendor_performance['overall_score'],
+                                'Negotiation Potential': negotiation_potential['negotiation_index'],
+                                'Negotiation Class': negotiation_potential['negotiation_class'],
+                                'Risk Level': risk_assessment['risk_class'],
+                                'Risk Score': risk_assessment['overall_risk'],
+                                'Recommended Contract': contract_recommendation['type'],
+                                'Contract Reasoning': contract_recommendation['reasoning'],
+                                'Suitability Score': suitability_analysis['suitability_score'],
+                                'Contract Priority': suitability_analysis['recommendation'],
+                                'Avg Unit Price': group_data['Unit Price'].mean(),
+                                'Price Stability': vendor_performance['price_stability']
+                            })
                     
-                    if suitability_analysis['recommendation'] != "Not Suitable":
-                        vendor_performance = calculate_vendor_performance_score(group_data)
-                        negotiation_potential = calculate_negotiation_potential_index(group_data)
-                        risk_assessment = calculate_supplier_risk_index(group_data)
-                        contract_recommendation = recommend_contract_type(
-                            suitability_analysis, vendor_performance, negotiation_potential
-                        )
-                        
-                        item_desc = group_data['Item Description'].iloc[0] if 'Item Description' in group_data.columns else f"Item {item}"
-                        
-                        contract_opportunities.append({
-                            'Vendor Name': vendor,
-                            'Item': item,
-                            'Item Description': item_desc[:40] + "..." if len(item_desc) > 40 else item_desc,
-                            'Annual Spend': suitability_analysis['total_spend'],
-                            'Order Frequency': suitability_analysis['order_frequency'],
-                            'Demand Predictability': suitability_analysis['demand_predictability'],
-                            'Vendor Performance': vendor_performance['overall_score'],
-                            'Negotiation Potential': negotiation_potential['negotiation_index'],
-                            'Negotiation Class': negotiation_potential['negotiation_class'],
-                            'Risk Level': risk_assessment['risk_class'],
-                            'Risk Score': risk_assessment['overall_risk'],
-                            'Recommended Contract': contract_recommendation['type'],
-                            'Contract Reasoning': contract_recommendation['reasoning'],
-                            'Suitability Score': suitability_analysis['suitability_score'],
-                            'Contract Priority': suitability_analysis['recommendation'],
-                            'Avg Unit Price': group_data['Unit Price'].mean(),
-                            'Price Stability': vendor_performance['price_stability']
-                        })
+                    except Exception as e:
+                        # Log error and continue with next vendor-item combination
+                        st.warning(f"Error processing {vendor} - Item {item}: {str(e)}")
+                        continue
                 
                 if contract_opportunities:
                     opportunities_df = pd.DataFrame(contract_opportunities)
