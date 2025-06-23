@@ -822,6 +822,44 @@ def display(df):
     st.header("🤝 Enhanced Contracting Opportunities")
     st.markdown("Advanced AI-powered procurement intelligence platform for optimal contracting strategies.")
     
+    # Quick help for bulk selection features
+    with st.expander("💡 Bulk Selection Features Guide", expanded=False):
+        st.markdown("""
+        **New Bulk Selection Features Available:**
+        
+        **🎯 Smart Identification Tab:**
+        - Quick configuration presets (High Value Focus, Standard Analysis, etc.)
+        
+        **📊 Vendor Performance Tab:**
+        - ✅ Select All Vendors / ❌ Deselect All buttons
+        
+        **🤝 Negotiation Intelligence Tab:**
+        - ✅ Select All Open (for negotiation)
+        - 🎯 Top 5 Spenders selection
+        - ⚡ Quick Wins (Open + Low Risk)
+        - 📊 Batch reporting and scheduling
+        
+        **🔄 Multi-Vendor Consolidation Tab:**
+        - ✅ Select All Items / ❌ Deselect All
+        - 🔴 High Priority Only
+        - 🟡 Medium+ Priority  
+        - 💰 Top 10 Savings selection
+        
+        **🎪 Contract Simulation Tab:**
+        - 🎯 Highest Spend vendor selection
+        - 🤝 Best Negotiable vendor selection
+        
+        **📅 Procurement Calendar Tab:**
+        - ✅ All Events / ❌ Clear Events
+        - ✅ All Priorities / 🔴 High Only
+        
+        **👥 Collaboration Hub Tab:**
+        - 🔴 Highest Priority contract
+        - 💰 Highest Spend contract selection
+        
+        **💡 Pro Tip:** Use these bulk selection features to quickly focus on your most important contracts and vendors!
+        """)
+    
     # Data validation
     required_columns = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
     missing_columns = [col for col in required_columns if col not in df.columns]
@@ -861,6 +899,62 @@ def display(df):
                 st.write(f"**Currencies Processed:** {len(detected_currencies)}")
                 for curr in detected_currencies[:5]:  # Show top 5
                     st.write(f"• {curr}")
+        
+        # Enhanced sidebar with bulk action summary
+        if 'currency_converted' in st.session_state and st.session_state['currency_converted']:
+            with st.sidebar.expander("🎯 Quick Actions Summary"):
+                st.write("**Active Selections:**")
+                
+                # Show active selections across tabs
+                selections_summary = []
+                
+                if 'performance_vendors' in st.session_state and st.session_state['performance_vendors']:
+                    selections_summary.append(f"📊 {len(st.session_state['performance_vendors'])} vendors (Performance)")
+                
+                if 'consolidation_items' in st.session_state and st.session_state['consolidation_items']:
+                    selections_summary.append(f"🔄 {len(st.session_state['consolidation_items'])} items (Consolidation)")
+                
+                if 'selected_negotiation_vendors' in st.session_state and st.session_state['selected_negotiation_vendors']:
+                    selections_summary.append(f"🤝 {len(st.session_state['selected_negotiation_vendors'])} vendors (Negotiation)")
+                
+                if selections_summary:
+                    for summary in selections_summary:
+                        st.write(f"• {summary}")
+                    
+                    # Global clear button
+                    if st.button("🗑️ Clear All Selections", key="global_clear_selections"):
+                        # Clear all selection states
+                        selection_keys = ['performance_vendors', 'consolidation_items', 'selected_negotiation_vendors', 
+                                        'calendar_event_filter', 'calendar_priority_filter']
+                        for key in selection_keys:
+                            if key in st.session_state:
+                                if key.endswith('_filter'):
+                                    st.session_state[key] = []  # Clear filters
+                                else:
+                                    st.session_state[key] = []  # Clear selections
+                        st.success("✅ All selections cleared!")
+                        st.rerun()
+                else:
+                    st.write("No active selections")
+                
+                # Quick stats
+                if 'enhanced_opportunities' in st.session_state:
+                    opportunities_df = st.session_state['enhanced_opportunities']
+                    st.write("**Portfolio Quick Stats:**")
+                    st.write(f"• Total Opportunities: {len(opportunities_df)}")
+                    st.write(f"• High Priority: {len(opportunities_df[opportunities_df['Contract Priority'] == 'High Priority'])}")
+                    st.write(f"• Open to Negotiation: {len(opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation'])}")
+            
+            # Keyboard shortcuts info
+            with st.sidebar.expander("⌨️ Keyboard Tips"):
+                st.markdown("""
+                **Efficiency Tips:**
+                - Use bulk selection buttons to quickly select multiple items
+                - Try configuration presets for common analysis scenarios
+                - Use priority-based selections for focused analysis
+                - Export selected data for offline analysis
+                - Check the Quick Actions Summary to track your selections
+                """)
         
         if st.sidebar.button("🔄 Reset Currency Conversion"):
             if 'currency_converted' in st.session_state:
@@ -922,7 +1016,9 @@ def display(df):
     with tab1:
         st.subheader("🎯 Smart Contract Identification")
         
-        # Enhanced configuration with more options
+        # Enhanced configuration with bulk selection helpers
+        st.write("### ⚙️ Analysis Configuration")
+        
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             min_spend = st.number_input("Min Annual Spend", min_value=0, value=50000, step=10000)
@@ -931,7 +1027,42 @@ def display(df):
         with col3:
             analysis_period = st.selectbox("Analysis Period", ["All Data", "Last 12 Months", "Last 6 Months"])
         with col4:
-            region_filter = st.selectbox("Region Filter", ["All Regions"] + list(df_clean.get('W/H', pd.Series()).unique()) if 'W/H' in df_clean.columns else ["All Regions"])
+            region_options = ["All Regions"] + list(df_clean.get('W/H', pd.Series()).unique()) if 'W/H' in df_clean.columns else ["All Regions"]
+            region_filter = st.selectbox("Region Filter", region_options)
+        
+        # Quick configuration presets
+        st.write("**Quick Configuration Presets:**")
+        preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
+        
+        with preset_col1:
+            if st.button("🎯 High Value Focus", key="preset_high_value"):
+                st.session_state['config_min_spend'] = 100000
+                st.session_state['config_min_frequency'] = 12
+                st.rerun()
+        
+        with preset_col2:
+            if st.button("📊 Standard Analysis", key="preset_standard"):
+                st.session_state['config_min_spend'] = 50000
+                st.session_state['config_min_frequency'] = 6
+                st.rerun()
+        
+        with preset_col3:
+            if st.button("🔍 Comprehensive Scan", key="preset_comprehensive"):
+                st.session_state['config_min_spend'] = 10000
+                st.session_state['config_min_frequency'] = 3
+                st.rerun()
+        
+        with preset_col4:
+            if st.button("⚡ Quick Wins", key="preset_quick_wins"):
+                st.session_state['config_min_spend'] = 25000
+                st.session_state['config_min_frequency'] = 8
+                st.rerun()
+        
+        # Apply preset values if set
+        if 'config_min_spend' in st.session_state:
+            min_spend = st.session_state['config_min_spend']
+        if 'config_min_frequency' in st.session_state:
+            min_frequency = st.session_state['config_min_frequency']
         
         # Filter data
         analysis_df = df_clean.copy()
@@ -1115,6 +1246,78 @@ def display(df):
             ].sort_values('Annual Spend', ascending=False)
             
             if len(high_value_negotiations) > 0:
+                
+                # Bulk selection for negotiation targets
+                st.write("**Bulk Selection for Negotiation Planning:**")
+                nego_col1, nego_col2, nego_col3, nego_col4 = st.columns(4)
+                
+                with nego_col1:
+                    if st.button("✅ Select All Open", key="select_all_open_nego"):
+                        open_vendors = opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation']['Vendor Name'].tolist()
+                        if 'selected_negotiation_vendors' not in st.session_state:
+                            st.session_state['selected_negotiation_vendors'] = []
+                        st.session_state['selected_negotiation_vendors'].extend(open_vendors)
+                        st.session_state['selected_negotiation_vendors'] = list(set(st.session_state['selected_negotiation_vendors']))  # Remove duplicates
+                        st.rerun()
+                
+                with nego_col2:
+                    if st.button("🎯 Top 5 Spenders", key="select_top_5_spenders"):
+                        top_spenders = opportunities_df.nlargest(5, 'Annual Spend')['Vendor Name'].tolist()
+                        st.session_state['selected_negotiation_vendors'] = top_spenders
+                        st.rerun()
+                
+                with nego_col3:
+                    if st.button("⚡ Quick Wins", key="select_quick_wins_nego"):
+                        quick_wins = opportunities_df[
+                            (opportunities_df['Negotiation Class'] == 'Open to Negotiation') & 
+                            (opportunities_df['Risk Level'] == 'Low Risk')
+                        ]['Vendor Name'].tolist()
+                        st.session_state['selected_negotiation_vendors'] = quick_wins
+                        st.rerun()
+                
+                with nego_col4:
+                    if st.button("❌ Clear Selection", key="clear_negotiation_selection"):
+                        st.session_state['selected_negotiation_vendors'] = []
+                        st.rerun()
+                
+                # Display selected vendors for batch operations
+                if 'selected_negotiation_vendors' in st.session_state and st.session_state['selected_negotiation_vendors']:
+                    st.success(f"📋 **Selected for Negotiation:** {len(st.session_state['selected_negotiation_vendors'])} vendors")
+                    
+                    # Bulk actions for selected vendors
+                    batch_col1, batch_col2, batch_col3 = st.columns(3)
+                    with batch_col1:
+                        if st.button("📊 Generate Batch Report", key="batch_nego_report"):
+                            selected_vendor_data = opportunities_df[opportunities_df['Vendor Name'].isin(st.session_state['selected_negotiation_vendors'])]
+                            total_batch_spend = selected_vendor_data['Annual Spend'].sum()
+                            avg_negotiation_score = selected_vendor_data['Negotiation Potential'].mean()
+                            
+                            st.info(f"""
+                            **Batch Analysis Results:**
+                            • Total Spend: {format_sar_amount(total_batch_spend)}
+                            • Average Negotiation Score: {avg_negotiation_score:.2f}
+                            • Vendors Selected: {len(st.session_state['selected_negotiation_vendors'])}
+                            • Estimated Savings Potential: {format_sar_amount(total_batch_spend * 0.06)}
+                            """)
+                    
+                    with batch_col2:
+                        if st.button("📅 Create Negotiation Schedule", key="create_nego_schedule"):
+                            st.success("📅 Negotiation schedule created for selected vendors!")
+                            st.write("**Suggested Schedule:**")
+                            for i, vendor in enumerate(st.session_state['selected_negotiation_vendors'][:5]):  # Show first 5
+                                week = i + 1
+                                st.write(f"• Week {week}: {vendor}")
+                    
+                    with batch_col3:
+                        if st.button("📄 Export Vendor List", key="export_nego_vendors"):
+                            selected_data = opportunities_df[opportunities_df['Vendor Name'].isin(st.session_state['selected_negotiation_vendors'])]
+                            csv = selected_data.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Selected Vendors",
+                                data=csv,
+                                file_name=f"selected_negotiation_vendors_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
                 for _, vendor in high_value_negotiations.head(5).iterrows():
                     with st.expander(f"🎯 {vendor['Vendor Name']} - ${vendor['Annual Spend']:,.0f}"):
                         col1, col2 = st.columns(2)
@@ -1216,16 +1419,55 @@ def display(df):
                 use_container_width=True
             )
             
-            # Interactive consolidation planner
+            # Interactive consolidation planner with bulk selection
             st.write("### 🎯 Consolidation Action Planner")
             
+            # Bulk selection buttons for consolidation
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.write("**Select items for consolidation planning:**")
+            with col2:
+                if st.button("✅ Select All Items", key="select_all_consolidation"):
+                    st.session_state['consolidation_items'] = consolidation_analysis['Item'].tolist()
+                    st.rerun()
+            with col3:
+                if st.button("❌ Deselect All", key="deselect_all_consolidation"):
+                    st.session_state['consolidation_items'] = []
+                    st.rerun()
+            
+            # Quick selection buttons for priorities
+            priority_col1, priority_col2, priority_col3 = st.columns(3)
+            with priority_col1:
+                if st.button("🔴 High Priority Only", key="select_high_priority"):
+                    high_priority_items = consolidation_analysis[consolidation_analysis['Consolidation Priority'] == 'High']['Item'].tolist()
+                    st.session_state['consolidation_items'] = high_priority_items
+                    st.rerun()
+            with priority_col2:
+                if st.button("🟡 Medium+ Priority", key="select_medium_priority"):
+                    medium_plus_items = consolidation_analysis[consolidation_analysis['Consolidation Priority'].isin(['High', 'Medium'])]['Item'].tolist()
+                    st.session_state['consolidation_items'] = medium_plus_items
+                    st.rerun()
+            with priority_col3:
+                if st.button("💰 Top 10 Savings", key="select_top_savings"):
+                    top_savings_items = consolidation_analysis.nlargest(10, 'Potential Savings')['Item'].tolist()
+                    st.session_state['consolidation_items'] = top_savings_items
+                    st.rerun()
+            
+            # Get current selection from session state
+            current_consolidation_selection = st.session_state.get('consolidation_items', 
+                consolidation_analysis.nlargest(3, 'Potential Savings')['Item'].tolist())
+            
             selected_items = st.multiselect(
-                "Select items for consolidation planning:",
+                "Selected consolidation items:",
                 consolidation_analysis['Item'].tolist(),
-                default=consolidation_analysis.nlargest(3, 'Potential Savings')['Item'].tolist()
+                default=current_consolidation_selection,
+                key="consolidation_items"
             )
             
             if selected_items:
+                # Show selection status
+                st.info(f"🎯 **Selected:** {len(selected_items)} of {len(consolidation_analysis)} items for consolidation planning")
+                
                 consolidation_plan = consolidation_analysis[consolidation_analysis['Item'].isin(selected_items)]
                 total_plan_savings = consolidation_plan['Potential Savings'].sum()
                 
@@ -1237,6 +1479,8 @@ def display(df):
                     phase = f"Phase {i+1}"
                     timeline = f"Month {i*2+1}-{i*2+2}"
                     st.write(f"• {phase} ({timeline}): Consolidate {item['Item']} with {item['Primary Vendor']} - {format_sar_amount(item['Potential Savings'])} savings")
+            else:
+                st.warning("⚠️ No items selected for consolidation planning. Please select items above.")
         
         else:
             st.info("No multi-vendor opportunities found in current dataset.")
@@ -1336,9 +1580,36 @@ def display(df):
             with col4:
                 contract_escalation = st.slider("Contract Escalation (%)", 0, 5, 2) / 100
             
-            # Select vendor for simulation
+            # Select vendor for simulation with bulk actions
             vendor_options = opportunities_df['Vendor Name'].unique()
-            selected_vendor = st.selectbox("Select Vendor for Simulation", vendor_options)
+            
+            # Vendor selection interface
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.write("**Select Vendor for Multi-Year Simulation:**")
+            with col2:
+                if st.button("🎯 Highest Spend", key="select_highest_spend_vendor"):
+                    highest_spend_vendor = opportunities_df.loc[opportunities_df['Annual Spend'].idxmax(), 'Vendor Name']
+                    st.session_state['simulation_vendor'] = highest_spend_vendor
+                    st.rerun()
+            with col3:
+                if st.button("🤝 Best Negotiable", key="select_best_negotiable_vendor"):
+                    negotiable_vendors = opportunities_df[opportunities_df['Negotiation Class'] == 'Open to Negotiation']
+                    if len(negotiable_vendors) > 0:
+                        best_negotiable = negotiable_vendors.loc[negotiable_vendors['Annual Spend'].idxmax(), 'Vendor Name']
+                        st.session_state['simulation_vendor'] = best_negotiable
+                    else:
+                        st.session_state['simulation_vendor'] = vendor_options[0]
+                    st.rerun()
+            
+            # Get current selection
+            current_simulation_vendor = st.session_state.get('simulation_vendor', vendor_options[0])
+            selected_vendor = st.selectbox(
+                "Vendor for detailed simulation:",
+                vendor_options,
+                index=list(vendor_options).index(current_simulation_vendor) if current_simulation_vendor in vendor_options else 0,
+                key="simulation_vendor"
+            )
             
             if selected_vendor:
                 vendor_opportunities = opportunities_df[opportunities_df['Vendor Name'] == selected_vendor]
@@ -1457,18 +1728,48 @@ def display(df):
             # Generate calendar events
             calendar_events = generate_procurement_calendar(opportunities_df)
             
-            # Calendar view options
+            # Calendar view options with bulk selection
             col1, col2, col3 = st.columns(3)
             with col1:
                 view_type = st.selectbox("Calendar View", ["Timeline", "Monthly", "Quarterly"])
             with col2:
-                event_filter = st.multiselect("Event Types", 
+                st.write("**Event Types:**")
+                
+                # Bulk buttons for event types
+                event_col1, event_col2 = st.columns(2)
+                with event_col1:
+                    if st.button("✅ All Events", key="select_all_events"):
+                        st.session_state['calendar_event_filter'] = ["Contract Start", "Renewal Notice", "Contract Expiry"]
+                        st.rerun()
+                with event_col2:
+                    if st.button("❌ Clear Events", key="clear_all_events"):
+                        st.session_state['calendar_event_filter'] = []
+                        st.rerun()
+                
+                current_event_selection = st.session_state.get('calendar_event_filter', ["Contract Start", "Renewal Notice", "Contract Expiry"])
+                event_filter = st.multiselect("Select Event Types", 
                                             ["Contract Start", "Renewal Notice", "Contract Expiry"],
-                                            default=["Contract Start", "Renewal Notice", "Contract Expiry"])
+                                            default=current_event_selection,
+                                            key="calendar_event_filter")
             with col3:
-                priority_filter = st.multiselect("Priority Filter",
+                st.write("**Priority Levels:**")
+                
+                # Bulk buttons for priority filter
+                priority_col1, priority_col2 = st.columns(2)
+                with priority_col1:
+                    if st.button("✅ All Priorities", key="select_all_priorities"):
+                        st.session_state['calendar_priority_filter'] = ["High Priority", "Medium Priority", "Low Priority"]
+                        st.rerun()
+                with priority_col2:
+                    if st.button("🔴 High Only", key="select_high_only"):
+                        st.session_state['calendar_priority_filter'] = ["High Priority"]
+                        st.rerun()
+                
+                current_priority_selection = st.session_state.get('calendar_priority_filter', ["High Priority", "Medium Priority"])
+                priority_filter = st.multiselect("Select Priority Levels",
                                                 ["High Priority", "Medium Priority", "Low Priority"],
-                                                default=["High Priority", "Medium Priority"])
+                                                default=current_priority_selection,
+                                                key="calendar_priority_filter")
             
             # Filter events
             filtered_events = calendar_events[
@@ -1548,10 +1849,34 @@ def display(df):
         if 'enhanced_opportunities' in st.session_state:
             opportunities_df = st.session_state['enhanced_opportunities']
             
-            # Contract selection for collaboration
+            # Contract selection for collaboration with quick selection
+            contract_options = [f"{row['Vendor Name']} - {row['Item Description']}" for _, row in opportunities_df.iterrows()]
+            
+            # Quick selection buttons
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.write("**Select Contract for Collaboration:**")
+            with col2:
+                if st.button("🔴 Highest Priority", key="select_highest_priority_contract"):
+                    high_priority = opportunities_df[opportunities_df['Contract Priority'] == 'High Priority']
+                    if len(high_priority) > 0:
+                        highest_priority_contract = f"{high_priority.iloc[0]['Vendor Name']} - {high_priority.iloc[0]['Item Description']}"
+                        st.session_state['collaboration_contract'] = highest_priority_contract
+                        st.rerun()
+            with col3:
+                if st.button("💰 Highest Spend", key="select_highest_spend_contract"):
+                    highest_spend = opportunities_df.loc[opportunities_df['Annual Spend'].idxmax()]
+                    highest_spend_contract = f"{highest_spend['Vendor Name']} - {highest_spend['Item Description']}"
+                    st.session_state['collaboration_contract'] = highest_spend_contract
+                    st.rerun()
+            
+            # Get current selection
+            current_collaboration_contract = st.session_state.get('collaboration_contract', contract_options[0])
             selected_contract = st.selectbox(
-                "Select Contract for Collaboration",
-                [f"{row['Vendor Name']} - {row['Item Description']}" for _, row in opportunities_df.iterrows()]
+                "Contract for collaboration:",
+                contract_options,
+                index=contract_options.index(current_collaboration_contract) if current_collaboration_contract in contract_options else 0,
+                key="collaboration_contract"
             )
             
             if selected_contract:
