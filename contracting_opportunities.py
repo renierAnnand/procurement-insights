@@ -392,7 +392,6 @@ def display(df):
                                     'Low Priority': '#6bcf7f'
                                 }
                             )
-                            fig.update_layout(height=400)
                             st.plotly_chart(fig, use_container_width=True)
                         
                         with col2:
@@ -412,8 +411,9 @@ def display(df):
                                     'Low Priority': '#6bcf7f'
                                 }
                             )
-                            fig.update_layout(height=400)
-                            fig.update_xaxis(title=f"Annual Spend ({currency_symbol})")
+                            fig.update_layout(
+                                xaxis_title=f"Annual Spend ({currency_symbol})"
+                            )
                             st.plotly_chart(fig, use_container_width=True)
                         
                         # Detailed results table
@@ -454,7 +454,6 @@ def display(df):
                                 'Low Priority': '#6bcf7f'
                             }
                         )
-                        fig.update_layout(height=500)
                         st.plotly_chart(fig, use_container_width=True)
                         
                         # Export opportunities (keep raw numbers for Excel compatibility)
@@ -588,8 +587,7 @@ def display(df):
                                 range=[0, 1]
                             )),
                         showlegend=True,
-                        title="Vendor Performance Comparison",
-                        height=500
+                        title="Vendor Performance Comparison"
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
@@ -612,10 +610,6 @@ def display(df):
                         'Total Spend': f'Total Annual Spend ({display_symbol})'
                     },
                     color_continuous_scale='Viridis'
-                )
-                fig.update_layout(
-                    height=500,
-                    yaxis_title=f"Total Annual Spend ({display_symbol})"
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -741,8 +735,7 @@ def display(df):
                         title=f"Savings Breakdown by Contract Type ({display_symbol})",
                         xaxis_title="Savings Category",
                         yaxis_title=f"Annual Savings ({display_symbol})",
-                        barmode='group',
-                        height=400
+                        barmode='group'
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
@@ -867,10 +860,12 @@ def display(df):
                     fig = px.bar(
                         x=vendor_contract_count.index,
                         y=vendor_contract_count.values,
-                        title="Contracts by Vendor (Top 10)",
-                        labels={'x': 'Vendor', 'y': 'Number of Contracts'}
+                        title="Contracts by Vendor (Top 10)"
                     )
-                    fig.update_layout(height=400)
+                    fig.update_layout(
+                        xaxis_title="Vendor",
+                        yaxis_title="Number of Contracts"
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
@@ -882,7 +877,6 @@ def display(df):
                         names=effort_by_phase.index,
                         title="Contract Distribution by Phase"
                     )
-                    fig.update_layout(height=400)
                     st.plotly_chart(fig, use_container_width=True)
                 
                 # Risk assessment
