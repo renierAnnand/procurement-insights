@@ -166,11 +166,29 @@ def display(df):
     # Clean data
     df_clean = df.copy()
     df_clean = df_clean.dropna(subset=required_columns)
+    
+    # Convert to numeric and handle errors
+    df_clean['Unit Price'] = pd.to_numeric(df_clean['Unit Price'], errors='coerce')
+    df_clean['Qty Delivered'] = pd.to_numeric(df_clean['Qty Delivered'], errors='coerce')
+    
+    # Remove rows with invalid numeric data
+    df_clean = df_clean.dropna(subset=['Unit Price', 'Qty Delivered'])
+    
+    # Filter for positive values
     df_clean = df_clean[df_clean['Unit Price'] > 0]
     df_clean = df_clean[df_clean['Qty Delivered'] > 0]
     
     if len(df_clean) == 0:
         st.warning("No valid data found for analysis.")
+        st.info("**Data Requirements:**")
+        st.info("- 'Unit Price' must be positive numbers")
+        st.info("- 'Qty Delivered' must be positive numbers") 
+        st.info("- Remove any text values from numeric columns")
+        
+        # Show data sample for debugging
+        if len(df) > 0:
+            st.subheader("📋 Data Sample (First 5 rows)")
+            st.dataframe(df.head())
         return
     
     # Region filter (if Region column exists)
@@ -242,7 +260,27 @@ def display(df):
         return
     
     # Display current region info
-    st.info(f"📍 **Region:** {selected_region} | **Currency:** {currency_name} ({currency_symbol}) | **Items:** {len(df_filtered):,}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info(f"📍 **Region:** {selected_region}")
+    with col2:
+        st.info(f"💰 **Currency:** {currency_name} ({currency_symbol})")
+    with col3:
+        st.info(f"📦 **Items:** {len(df_filtered):,} records")
+    
+    # Data quality info
+    with st.expander("📊 Data Quality Summary", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            unique_items = df_filtered['Item'].nunique()
+            avg_unit_price = df_filtered['Unit Price'].mean()
+            st.metric("Unique Items", unique_items)
+            st.metric("Avg Unit Price", f"{currency_symbol}{avg_unit_price:.2f}")
+        with col2:
+            total_qty = df_filtered['Qty Delivered'].sum()
+            avg_qty = df_filtered['Qty Delivered'].mean()
+            st.metric("Total Quantity", f"{total_qty:,.0f}")
+            st.metric("Avg Order Size", f"{avg_qty:.0f}")
     
     # Tabs
     tab1, tab2 = st.tabs(["📊 EOQ Analysis", "💰 Cost Optimization"])
@@ -292,28 +330,34 @@ def display(df):
             
             # EOQ calculation
             if annual_demand > 0 and holding_cost > 0:
-                eoq = sqrt((2 * annual_demand * ordering_cost) / holding_cost)
-                
-                # Current average order size
-                current_avg_order = item_data['Qty Delivered'].mean()
-                
-                # Cost calculation functions
-                def ordering_cost_func(order_qty):
-                    if order_qty <= 0:
-                        return float('inf')
-                    return (annual_demand / order_qty) * ordering_cost
-                
-                def holding_cost_func(order_qty):
-                    return (order_qty / 2) * holding_cost
-                
-                def total_cost(order_qty):
-                    if order_qty <= 0:
-                        return float('inf')
-                    return ordering_cost_func(order_qty) + holding_cost_func(order_qty)
-                
-                eoq_cost = total_cost(eoq)
-                current_cost = total_cost(current_avg_order)
-                potential_savings = current_cost - eoq_cost
+                try:
+                    eoq = sqrt((2 * annual_demand * ordering_cost) / holding_cost)
+                    
+                    # Current average order size
+                    current_avg_order = item_data['Qty Delivered'].mean()
+                    
+                    # Cost calculation functions
+                    def ordering_cost_func(order_qty):
+                        if order_qty <= 0:
+                            return float('inf')
+                        return (annual_demand / order_qty) * ordering_cost
+                    
+                    def holding_cost_func(order_qty):
+                        return (order_qty / 2) * holding_cost
+                    
+                    def total_cost(order_qty):
+                        if order_qty <= 0:
+                            return float('inf')
+                        return ordering_cost_func(order_qty) + holding_cost_func(order_qty)
+                    
+                    eoq_cost = total_cost(eoq)
+                    current_cost = total_cost(current_avg_order)
+                    potential_savings = current_cost - eoq_cost
+                    
+                except Exception as e:
+                    st.error(f"Error in EOQ calculation: {str(e)}")
+                    st.info("Please check your data values and parameters.")
+                    return
                 
                 # Display results
                 col1, col2, col3, col4, col5 = st.columns(5)
@@ -454,29 +498,33 @@ def display(df):
                     holding_cost = holding_cost_fixed
                 
                 if annual_demand > 0 and holding_cost > 0:
-                    eoq = sqrt((2 * annual_demand * ordering_cost) / holding_cost)
-                    
-                    def total_cost(order_qty):
-                        if order_qty <= 0:
-                            return float('inf')
-                        ordering_cost_total = (annual_demand / order_qty) * ordering_cost
-                        holding_cost_total = (order_qty / 2) * holding_cost
-                        return ordering_cost_total + holding_cost_total
-                    
-                    eoq_cost = total_cost(eoq)
-                    current_cost = total_cost(current_avg_order)
-                    potential_savings = current_cost - eoq_cost
-                    
-                    optimization_results.append({
-                        'Item': item,
-                        'Annual Demand': annual_demand,
-                        'Current Avg Order': current_avg_order,
-                        'Optimal EOQ': eoq,
-                        'Current Cost': current_cost,
-                        'EOQ Cost': eoq_cost,
-                        'Potential Savings': potential_savings,
-                        'Savings %': (potential_savings / current_cost * 100) if current_cost > 0 else 0
-                    })
+                    try:
+                        eoq = sqrt((2 * annual_demand * ordering_cost) / holding_cost)
+                        
+                        def total_cost(order_qty):
+                            if order_qty <= 0:
+                                return float('inf')
+                            ordering_cost_total = (annual_demand / order_qty) * ordering_cost
+                            holding_cost_total = (order_qty / 2) * holding_cost
+                            return ordering_cost_total + holding_cost_total
+                        
+                        eoq_cost = total_cost(eoq)
+                        current_cost = total_cost(current_avg_order)
+                        potential_savings = current_cost - eoq_cost
+                        
+                        optimization_results.append({
+                            'Item': item,
+                            'Annual Demand': annual_demand,
+                            'Current Avg Order': current_avg_order,
+                            'Optimal EOQ': eoq,
+                            'Current Cost': current_cost,
+                            'EOQ Cost': eoq_cost,
+                            'Potential Savings': potential_savings,
+                            'Savings %': (potential_savings / current_cost * 100) if current_cost > 0 else 0
+                        })
+                    except Exception as e:
+                        # Skip items with calculation errors but continue processing others
+                        continue
         
         if optimization_results:
             results_df = pd.DataFrame(optimization_results)
