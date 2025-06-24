@@ -336,61 +336,124 @@ def display(df):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Get unique regions from the dataframe
-        regions = sorted(df["Region"].dropna().unique()) if "Region" in df.columns else ["AGC", "UAE", "KSA", "USA", "Europe"]
+        # Get actual regions from the dataframe (like contracting module)
+        if "Region" in df.columns:
+            regions = sorted(df["Region"].dropna().unique())
+        else:
+            # If no Region column, try other common region column names
+            region_columns = ["Business Region", "Region", "Country", "Location", "Site"]
+            regions = []
+            for col in region_columns:
+                if col in df.columns:
+                    regions = sorted(df[col].dropna().unique())
+                    break
+            
+            if not regions:
+                regions = ["All Regions"]  # Fallback
+        
         selected_region = st.selectbox("Select Business Region", regions)
     
     with col2:
-        # Get all available currencies
+        # Get all available currencies from the data
         currency_options = [
             "AED", "SAR", "USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CNY", 
             "INR", "SGD", "HKD", "CHF", "NOK", "SEK", "DKK", "PLN", "CZK",
             "BRL", "MXN", "ZAR", "NGN", "KES", "EGP", "QAR", "KWD", "BHD", "OMR"
         ]
         
-        # Auto-detect currency based on region
-        currency_map = {
-            # Middle East & Africa
-            "AGC": "AED", "UAE": "AED", "Dubai": "AED", "Abu Dhabi": "AED",
-            "KSA": "SAR", "Saudi Arabia": "SAR", "Riyadh": "SAR", "Jeddah": "SAR",
-            "Qatar": "QAR", "Kuwait": "KWD", "Bahrain": "BHD", "Oman": "OMR",
-            "Egypt": "EGP", "South Africa": "ZAR", "Nigeria": "NGN", "Kenya": "KES",
-            
-            # Americas
-            "USA": "USD", "US": "USD", "Canada": "CAD", "Mexico": "MXN", "Brazil": "BRL",
-            
-            # Europe
-            "Europe": "EUR", "Germany": "EUR", "France": "EUR", "UK": "GBP", 
-            "Switzerland": "CHF", "Norway": "NOK", "Sweden": "SEK", "Denmark": "DKK",
-            
-            # Asia Pacific
-            "China": "CNY", "Japan": "JPY", "India": "INR", "Singapore": "SGD",
-            "Hong Kong": "HKD", "Australia": "AUD"
-        }
+        # Try to detect currency from actual data
+        detected_currency = "USD"  # Default fallback
         
-        # Get default currency for selected region
-        default_currency = currency_map.get(selected_region, "USD")
-        default_index = currency_options.index(default_currency) if default_currency in currency_options else 0
+        # Filter data by selected region first
+        if "Region" in df.columns and selected_region != "All Regions":
+            region_data = df[df["Region"] == selected_region]
+        else:
+            region_data = df
         
+        # Try to detect currency from data
+        if "Currency" in region_data.columns:
+            # If there's a Currency column, use the most common one
+            currency_counts = region_data["Currency"].value_counts()
+            if len(currency_counts) > 0:
+                detected_currency = currency_counts.index[0]
+        elif "Unit Price" in region_data.columns and len(region_data) > 0:
+            # Try to infer currency from price patterns or region
+            region_currency_map = {
+                "AGC": "AED", "UAE": "AED", "Dubai": "AED",
+                "KSA": "SAR", "Saudi Arabia": "SAR", "Riyadh": "SAR",
+                "Qatar": "QAR", "Kuwait": "KWD", "Bahrain": "BHD", "Oman": "OMR",
+                "Egypt": "EGP", "South Africa": "ZAR", "Nigeria": "NGN",
+                "USA": "USD", "Canada": "CAD", "Mexico": "MXN",
+                "Germany": "EUR", "France": "EUR", "UK": "GBP",
+                "China": "CNY", "Japan": "JPY", "India": "INR",
+                "Singapore": "SGD", "Australia": "AUD"
+            }
+            
+            for region_key, currency in region_currency_map.items():
+                if region_key.lower() in selected_region.lower():
+                    detected_currency = currency
+                    break
+        
+        # Find the index of detected currency
+        default_index = currency_options.index(detected_currency) if detected_currency in currency_options else 0
         selected_currency = st.selectbox("Select Currency", currency_options, index=default_index)
     
     # Filter data by selected region
-    if "Region" in df.columns:
+    if "Region" in df.columns and selected_region != "All Regions":
         region_df = df[df["Region"] == selected_region].copy()
     else:
-        region_df = df.copy()  # Use all data if no region column
+        region_df = df.copy()  # Use all data if no region column or "All Regions" selected
     
-    # Display region info boxes (matching contracting module style)
+    # Display region summary statistics (matching contracting module style)
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.info(f"**Region:** {selected_region}")
+        st.info(f"**Records:** {len(region_df)}")
     
     with col2:
-        st.info(f"**Currency:** {selected_currency}")
+        unique_items = region_df["Item"].nunique() if "Item" in region_df.columns else 0
+        st.info(f"**Unique Items:** {unique_items}")
     
     with col3:
-        st.info(f"**Records:** {len(region_df)}")
+        total_orders = len(region_df)
+        st.info(f"**Total Orders:** {total_orders}")
+    
+    # Additional summary row for more detailed information
+    if len(region_df) > 0:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Date range
+            if "Creation Date" in region_df.columns:
+                try:
+                    dates = pd.to_datetime(region_df["Creation Date"], errors='coerce')
+                    valid_dates = dates.dropna()
+                    if len(valid_dates) > 0:
+                        date_range = f"{valid_dates.min().strftime('%Y-%m-%d')} to {valid_dates.max().strftime('%Y-%m-%d')}"
+                    else:
+                        date_range = "No valid dates"
+                except:
+                    date_range = "Date parsing error"
+            else:
+                date_range = "No date column"
+            
+            st.write(f"**Date Range:** {date_range}")
+        
+        with col2:
+            # Unique vendors
+            unique_vendors = region_df["Vendor"].nunique() if "Vendor" in region_df.columns else 0
+            st.write(f"**Unique Vendors:** {unique_vendors}")
+        
+        with col3:
+            # Total value (if available)
+            if "Unit Price" in region_df.columns and "Qty Delivered" in region_df.columns:
+                try:
+                    total_value = (region_df["Unit Price"] * region_df["Qty Delivered"]).sum()
+                    st.write(f"**Total Value:** {total_value:,.0f} {selected_currency}")
+                except:
+                    st.write(f"**Total Value:** N/A")
+            else:
+                st.write(f"**Currency:** {selected_currency}")
     
     if region_df.empty:
         st.warning(f"No data available for region: {selected_region}")
@@ -569,53 +632,140 @@ def display(df):
         
         selected_item = st.selectbox("Select Item", filtered_items)
         
-        # Filter the dataset for selected item
-        item_df = region_df[region_df["Item"] == selected_item].copy()
+        # Always show debugging information
+        st.write("---")
+        st.write("**🔍 Data Filtering Debug Info:**")
         
-        # Debug information
-        st.write(f"**🔍 Data Filtering Debug Info:**")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.write(f"Total rows in region: {len(region_df)}")
+            st.write(f"**Total regional records:** {len(region_df)}")
         with col2:
-            st.write(f"Rows for selected item: {len(item_df)}")
+            st.write(f"**Available items:** {len(filtered_items)}")
         with col3:
-            if not item_df.empty:
-                st.write(f"Date range: {len(item_df)} records")
-            else:
-                st.write("No records found")
+            st.write(f"**Selected item:** {selected_item}")
         with col4:
-            if not item_df.empty and "Qty Delivered" in item_df.columns:
-                valid_qty = item_df["Qty Delivered"].notna().sum()
-                st.write(f"Valid qty records: {valid_qty}")
+            st.write(f"**Search term:** '{search_term}'" if search_term else "None")
+        
+        # Show sample of regional data
+        if st.checkbox("🔍 Show Regional Data Sample", help="View sample of filtered regional data"):
+            st.write(f"**Sample data from {selected_region} region:**")
+            st.dataframe(region_df.head(10))
+            
+            if "Item" in region_df.columns:
+                item_counts = region_df["Item"].value_counts().head(20)
+                st.write("**Top 20 items by frequency:**")
+                st.dataframe(item_counts)
+        
+        # Filter the dataset for selected item - with extensive debugging
+        st.write("**📊 Item Filtering Process:**")
+        
+        # Check if Item column exists
+        if "Item" not in region_df.columns:
+            st.error("❌ 'Item' column not found in dataset")
+            st.write("Available columns:", list(region_df.columns))
+            return
+        
+        # Show item filtering details
+        st.write(f"Filtering for Item = '{selected_item}'...")
+        
+        # Check different data types and filtering approaches
+        item_column = region_df["Item"]
+        st.write(f"Item column data type: {item_column.dtype}")
+        
+        # Show unique items around the selected item
+        unique_items = sorted(region_df["Item"].dropna().unique())
+        if selected_item in unique_items:
+            item_index = unique_items.index(selected_item)
+            start_idx = max(0, item_index - 3)
+            end_idx = min(len(unique_items), item_index + 4)
+            context_items = unique_items[start_idx:end_idx]
+            st.write(f"Items around selected item: {context_items}")
+        
+        # Try different filtering approaches
+        try:
+            # Convert both to strings for comparison
+            item_df_str = region_df[region_df["Item"].astype(str) == str(selected_item)].copy()
+            st.write(f"String comparison matches: {len(item_df_str)}")
+            
+            # Try exact match
+            item_df_exact = region_df[region_df["Item"] == selected_item].copy()
+            st.write(f"Exact match results: {len(item_df_exact)}")
+            
+            # Use the one with more results, prefer exact match if equal
+            if len(item_df_exact) >= len(item_df_str):
+                item_df = item_df_exact
+                st.success(f"✅ Using exact match: {len(item_df)} records")
+            else:
+                item_df = item_df_str
+                st.success(f"✅ Using string match: {len(item_df)} records")
+                
+        except Exception as e:
+            st.error(f"❌ Error in item filtering: {str(e)}")
+            return
         
         if item_df.empty:
-            st.error(f"❌ No data available for item: **{selected_item}**")
+            st.error(f"❌ No data found for item: **{selected_item}**")
             
-            # Show available items for debugging
-            with st.expander("🔍 Debug: Available Items in Current Filter"):
-                available_debug = region_df["Item"].value_counts().head(10)
-                st.write("Top 10 items in current region/vendor filter:")
-                st.dataframe(available_debug)
+            # Show detailed debugging for empty results
+            with st.expander("🔍 Detailed Debugging"):
+                st.write("**All unique items in current region:**")
+                all_items_df = pd.DataFrame({
+                    'Item': sorted(region_df["Item"].dropna().unique())
+                })
+                st.dataframe(all_items_df)
+                
+                # Check if there are any partial matches
+                partial_matches = [item for item in region_df["Item"].dropna().unique() 
+                                 if str(selected_item) in str(item) or str(item) in str(selected_item)]
+                if partial_matches:
+                    st.write("**Potential partial matches:**")
+                    st.write(partial_matches)
             
             return
         
-        # Check for required columns
+        # Show successful filtering results
+        st.success(f"✅ Found {len(item_df)} records for item {selected_item}")
+        
+        # Check for required columns and data quality
         required_columns = ["Creation Date", "Qty Delivered"]
         missing_columns = [col for col in required_columns if col not in item_df.columns]
         
         if missing_columns:
             st.error(f"❌ Missing required columns: {missing_columns}")
-            st.write("Available columns:", list(item_df.columns))
+            st.write("**Available columns in item data:**")
+            st.write(list(item_df.columns))
             return
         
-        # Check for valid data
-        item_df = item_df.dropna(subset=["Creation Date", "Qty Delivered"])
+        # Show data quality info
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            valid_dates = item_df["Creation Date"].notna().sum()
+            st.write(f"**Valid dates:** {valid_dates}/{len(item_df)}")
+        with col2:
+            valid_qty = item_df["Qty Delivered"].notna().sum()
+            st.write(f"**Valid quantities:** {valid_qty}/{len(item_df)}")
+        with col3:
+            date_range = "N/A"
+            try:
+                dates = pd.to_datetime(item_df["Creation Date"], errors='coerce')
+                if dates.notna().any():
+                    date_range = f"{dates.min().date()} to {dates.max().date()}"
+            except:
+                pass
+            st.write(f"**Date range:** {date_range}")
+        
+        # Clean the data
+        item_df = item_df.dropna(subset=required_columns)
         
         if item_df.empty:
-            st.error(f"❌ No valid data found for item: **{selected_item}**")
-            st.write("All records have missing Creation Date or Qty Delivered values.")
+            st.error(f"❌ No valid data remaining after removing missing values")
             return
+        
+        st.write(f"**Records after cleaning:** {len(item_df)}")
+        
+        # Show sample of cleaned data
+        if st.checkbox("📋 Show Sample of Item Data"):
+            st.dataframe(item_df.head(10))
         
         # Reorder Point Parameters
         st.subheader("⚙️ Reorder Point Parameters")
@@ -908,7 +1058,7 @@ def display(df):
                 detailed_export = daily_demand_df.copy()
                 detailed_export['Item'] = selected_item
                 detailed_export['Region'] = selected_region
-                detailed_export['Currency'] = display_currency
+                detailed_export['Currency'] = selected_currency
                 detailed_export['Reorder Point'] = reorder_point
                 
                 detailed_csv = detailed_export.to_csv(index=False)
