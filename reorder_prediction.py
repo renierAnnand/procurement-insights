@@ -1,907 +1,748 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import warnings
 import io
 
-# Try to import openpyxl for Excel functionality
-try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils.dataframe import dataframe_to_rows
-    EXCEL_AVAILABLE = True
-except ImportError:
-    EXCEL_AVAILABLE = False
-
-warnings.filterwarnings('ignore')
-
-def calculate_metrics(item_df):
-    """Calculate all reorder point metrics for a given item"""
-    if len(item_df) == 0:
-        return None
-    
-    # Prepare data
-    item_df = item_df.copy()
-    item_df['Creation Date'] = pd.to_datetime(item_df['Creation Date'])
-    item_df = item_df.sort_values('Creation Date')
-    
-    # Calculate date range and daily demand
-    min_date = item_df['Creation Date'].min()
-    max_date = item_df['Creation Date'].max()
-    total_days = (max_date - min_date).days + 1
-    total_quantity = item_df['Qty Delivered'].sum()
-    
-    # Average daily demand
-    avg_daily_demand = total_quantity / total_days if total_days > 0 else 0
-    
-    # Estimate lead time (average time between orders)
-    time_diffs = item_df['Creation Date'].diff().dropna()
-    if len(time_diffs) > 0:
-        avg_days_between_orders = time_diffs.dt.days.mean()
-        # Use 30% of reorder cycle as lead time estimate (minimum 3 days)
-        lead_time = max(avg_days_between_orders * 0.3, 3)
-        lead_time_std = time_diffs.dt.days.std() * 0.3 if len(time_diffs) > 1 else 1
-    else:
-        lead_time = 7  # Default
-        lead_time_std = 2
-    
-    # Safety stock calculation (Z=1.65 for 95% service level)
-    z_score = 1.65
-    safety_stock = z_score * avg_daily_demand * lead_time_std
-    
-    # Reorder point scenarios
-    optimistic_rop = (avg_daily_demand * lead_time * 0.8) + (safety_stock * 0.5)
-    likely_rop = (avg_daily_demand * lead_time) + safety_stock
-    conservative_rop = (avg_daily_demand * lead_time * 1.2) + (safety_stock * 1.5)
-    
-    # Create daily demand series for visualization
-    full_date_range = pd.date_range(start=min_date, end=max_date, freq='D')
-    daily_demand_series = item_df.groupby('Creation Date')['Qty Delivered'].sum()
-    daily_demand_series = daily_demand_series.reindex(full_date_range, fill_value=0)
-    
-    return {
-        'avg_daily_demand': avg_daily_demand,
-        'lead_time': lead_time,
-        'safety_stock': safety_stock,
-        'optimistic_rop': optimistic_rop,
-        'likely_rop': likely_rop,
-        'conservative_rop': conservative_rop,
-        'daily_demand_series': daily_demand_series,
-        'total_orders': len(item_df),
-        'date_range_days': total_days
-    }
-
-def perform_bulk_analysis(df, progress_callback=None):
-    """Perform comprehensive bulk analysis on all items"""
-    all_items = df['Item'].dropna().unique()
+def perform_bulk_analysis(df, items, lead_time_days, safety_stock_days, analysis_period, currency):
+    """Perform bulk analysis on multiple items"""
     results = []
     
-    for i, item in enumerate(all_items):
-        if progress_callback:
-            progress_callback(i + 1, len(all_items), item)
-        
+    # Calculate date filter based on analysis period
+    end_date = datetime.now()
+    if analysis_period == "Last 30 days":
+        start_date = end_date - timedelta(days=30)
+    elif analysis_period == "Last 60 days":
+        start_date = end_date - timedelta(days=60)
+    elif analysis_period == "Last 90 days":
+        start_date = end_date - timedelta(days=90)
+    elif analysis_period == "Last 180 days":
+        start_date = end_date - timedelta(days=180)
+    else:
+        start_date = None
+    
+    for item in items:
         try:
-            item_data = df[df['Item'] == item].copy()
-            metrics = calculate_metrics(item_data)
+            # Filter data for current item
+            item_df = df[df["Item"] == item].copy()
             
-            if metrics is None:
+            if item_df.empty:
                 continue
             
-            # Calculate additional business metrics
-            total_quantity = item_data['Qty Delivered'].sum()
-            total_orders = len(item_data)
+            # Convert Creation Date to datetime
+            item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"])
             
-            # Calculate demand variability (coefficient of variation)
-            daily_demand_std = metrics['daily_demand_series'].std()
-            demand_cv = daily_demand_std / metrics['avg_daily_demand'] if metrics['avg_daily_demand'] > 0 else 0
+            # Apply date filter if specified
+            if start_date:
+                item_df = item_df[item_df["Creation Date"] >= start_date]
             
-            # Calculate order frequency (orders per month)
-            date_range_months = max(metrics['date_range_days'] / 30, 1)
-            order_frequency = total_orders / date_range_months
+            if item_df.empty:
+                continue
             
-            # Lead time risk assessment
-            lead_time_risk = "Low" if metrics['lead_time'] <= 7 else "Medium" if metrics['lead_time'] <= 14 else "High"
+            # Calculate daily demand
+            daily_demand = item_df.groupby(item_df["Creation Date"].dt.date)["Qty Delivered"].sum()
             
-            # Priority classification based on volume and variability
-            priority_score = (
-                (total_quantity / 1000) * 0.4 +  # Volume impact
-                (metrics['avg_daily_demand'] * 10) * 0.3 +  # Daily demand impact
-                (demand_cv * 100) * 0.2 +  # Variability impact
-                (1 / max(order_frequency, 0.1)) * 0.1  # Frequency impact (inverted)
-            )
+            if daily_demand.empty:
+                continue
             
-            # Assign priority category
-            if priority_score >= 50:
-                priority = "Critical"
-            elif priority_score >= 25:
-                priority = "High"
-            elif priority_score >= 10:
-                priority = "Medium"
+            # Calculate metrics
+            avg_daily_demand = daily_demand.mean()
+            demand_std = daily_demand.std()
+            min_demand = daily_demand.min()
+            max_demand = daily_demand.max()
+            total_demand = daily_demand.sum()
+            days_with_data = len(daily_demand)
+            
+            # Calculate reorder points
+            lead_time_demand = avg_daily_demand * lead_time_days
+            safety_stock = avg_daily_demand * safety_stock_days
+            reorder_point = lead_time_demand + safety_stock
+            
+            # Statistical reorder point (95% service level)
+            statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65
+            statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            
+            # Calculate different scenarios
+            optimistic_rp = avg_daily_demand * lead_time_days * 0.8  # 20% less
+            conservative_rp = reorder_point * 1.3  # 30% more
+            
+            # Risk assessment
+            if reorder_point > statistical_reorder_point * 1.2:
+                risk_level = "Low Risk (High Stock)"
+            elif reorder_point < statistical_reorder_point * 0.8:
+                risk_level = "High Risk (Low Stock)"
             else:
-                priority = "Low"
-            
-            # Seasonal analysis (simplified)
-            monthly_demand = metrics['daily_demand_series'].resample('M').sum()
-            is_seasonal = len(monthly_demand) >= 6 and (monthly_demand.std() / monthly_demand.mean() > 0.5) if monthly_demand.mean() > 0 else False
+                risk_level = "Balanced"
             
             results.append({
-                'Item': item,
-                'Priority': priority,
-                'Priority_Score': round(priority_score, 2),
-                'Total_Quantity': total_quantity,
-                'Total_Orders': total_orders,
-                'Avg_Daily_Demand': round(metrics['avg_daily_demand'], 2),
-                'Lead_Time_Days': round(metrics['lead_time'], 1),
-                'Lead_Time_Risk': lead_time_risk,
-                'Safety_Stock': round(metrics['safety_stock'], 2),
-                'Reorder_Point_Optimistic': round(metrics['optimistic_rop'], 2),
-                'Reorder_Point_Likely': round(metrics['likely_rop'], 2),
-                'Reorder_Point_Conservative': round(metrics['conservative_rop'], 2),
-                'Demand_Variability_CV': round(demand_cv, 3),
-                'Order_Frequency_Monthly': round(order_frequency, 2),
-                'Is_Seasonal': is_seasonal,
-                'Data_Period_Days': metrics['date_range_days'],
-                'Analysis_Date': datetime.now().strftime('%Y-%m-%d')
+                "Item": item,
+                "Avg Daily Demand": round(avg_daily_demand, 2),
+                "Demand Std Dev": round(demand_std, 2),
+                "Min Daily Demand": round(min_demand, 2),
+                "Max Daily Demand": round(max_demand, 2),
+                "Total Demand": round(total_demand, 2),
+                "Days with Data": days_with_data,
+                "Lead Time (days)": lead_time_days,
+                "Safety Stock": round(safety_stock, 2),
+                "Reorder Point": round(reorder_point, 2),
+                "Statistical Reorder Point": round(statistical_reorder_point, 2),
+                "Optimistic Scenario": round(optimistic_rp, 2),
+                "Conservative Scenario": round(conservative_rp, 2),
+                "Risk Level": risk_level,
+                "Currency": currency
             })
             
         except Exception as e:
-            st.warning(f"Could not analyze item '{item}': {str(e)}")
+            st.warning(f"Error analyzing item {item}: {str(e)}")
             continue
     
-    return pd.DataFrame(results) if results else None
-
-def create_excel_report(bulk_results_df, df):
-    """Create comprehensive Excel report with multiple sheets"""
-    if not EXCEL_AVAILABLE:
-        st.error("❌ Excel export not available. openpyxl package is required.")
-        return None
-    
-    # Create Excel buffer
-    excel_buffer = io.BytesIO()
-    
-    try:
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            # Sheet 1: Executive Summary
-            create_executive_summary_sheet(bulk_results_df, writer)
-            
-            # Sheet 2: Detailed Analysis
-            bulk_results_df.to_excel(writer, sheet_name='Detailed Analysis', index=False)
-            
-            # Sheet 3: Priority Matrix
-            create_priority_matrix_sheet(bulk_results_df, writer)
-            
-            # Sheet 4: Risk Assessment
-            create_risk_assessment_sheet(bulk_results_df, writer)
-            
-            # Sheet 5: Action Plan
-            create_action_plan_sheet(bulk_results_df, writer)
-            
-            # Sheet 6: Raw Data Summary
-            create_raw_data_summary_sheet(df, writer)
-        
-        excel_buffer.seek(0)
-        return excel_buffer
-    except Exception as e:
-        st.error(f"❌ Error creating Excel report: {str(e)}")
+    if results:
+        return pd.DataFrame(results)
+    else:
         return None
 
-def create_csv_bundle(bulk_results_df, df):
-    """Create multiple CSV files as a bundle when Excel is not available"""
-    csv_files = {}
+def display_bulk_results(results_df, currency):
+    """Display bulk analysis results with visualizations and export options"""
     
-    # Executive Summary
-    summary_data = {
-        'Metric': [
-            'Total Items Analyzed',
-            'Critical Priority Items',
-            'High Priority Items', 
-            'Medium Priority Items',
-            'Low Priority Items',
-            'Items with High Lead Time Risk',
-            'Seasonal Items',
-            'Total Reorder Investment (Likely)',
-            'Total Reorder Investment (Conservative)',
-            'Average Lead Time (Days)',
-            'Items Requiring Immediate Action'
-        ],
-        'Value': [
-            len(bulk_results_df),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Critical']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'High']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Medium']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Low']),
-            len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']),
-            len(bulk_results_df[bulk_results_df['Is_Seasonal'] == True]),
-            f"{bulk_results_df['Reorder_Point_Likely'].sum():,.0f}",
-            f"{bulk_results_df['Reorder_Point_Conservative'].sum():,.0f}",
-            f"{bulk_results_df['Lead_Time_Days'].mean():.1f}",
-            len(bulk_results_df[(bulk_results_df['Priority'].isin(['Critical', 'High'])) | 
-                              (bulk_results_df['Lead_Time_Risk'] == 'High')])
-        ]
-    }
-    summary_df = pd.DataFrame(summary_data)
-    csv_files['executive_summary'] = summary_df.to_csv(index=False)
+    st.subheader("📊 Bulk Analysis Results")
     
-    # Detailed Analysis
-    csv_files['detailed_analysis'] = bulk_results_df.to_csv(index=False)
-    
-    # Priority Matrix
-    priority_analysis = bulk_results_df.groupby('Priority').agg({
-        'Item': 'count',
-        'Total_Quantity': 'sum',
-        'Reorder_Point_Likely': 'sum',
-        'Avg_Daily_Demand': 'mean',
-        'Lead_Time_Days': 'mean'
-    }).round(2)
-    priority_analysis.columns = ['Item_Count', 'Total_Volume', 'Total_Reorder_Investment', 
-                               'Avg_Daily_Demand', 'Avg_Lead_Time']
-    csv_files['priority_matrix'] = priority_analysis.to_csv()
-    
-    # High-risk items
-    high_risk_df = bulk_results_df[
-        (bulk_results_df['Lead_Time_Risk'] == 'High') |
-        (bulk_results_df['Demand_Variability_CV'] > 0.5) |
-        (bulk_results_df['Is_Seasonal'] == True)
-    ].copy()
-    
-    if not high_risk_df.empty:
-        risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
-                       'Is_Seasonal', 'Reorder_Point_Conservative']
-        csv_files['risk_assessment'] = high_risk_df[risk_columns].to_csv(index=False)
-    
-    return csv_files
-
-def create_executive_summary_sheet(bulk_results_df, writer):
-    """Create executive summary sheet"""
-    if not EXCEL_AVAILABLE:
-        return
-        
-    summary_data = {
-        'Metric': [
-            'Total Items Analyzed',
-            'Critical Priority Items',
-            'High Priority Items', 
-            'Medium Priority Items',
-            'Low Priority Items',
-            'Items with High Lead Time Risk',
-            'Seasonal Items',
-            'Total Reorder Investment (Likely)',
-            'Total Reorder Investment (Conservative)',
-            'Average Lead Time (Days)',
-            'Items Requiring Immediate Action'
-        ],
-        'Value': [
-            len(bulk_results_df),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Critical']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'High']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Medium']),
-            len(bulk_results_df[bulk_results_df['Priority'] == 'Low']),
-            len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']),
-            len(bulk_results_df[bulk_results_df['Is_Seasonal'] == True]),
-            f"{bulk_results_df['Reorder_Point_Likely'].sum():,.0f}",
-            f"{bulk_results_df['Reorder_Point_Conservative'].sum():,.0f}",
-            f"{bulk_results_df['Lead_Time_Days'].mean():.1f}",
-            len(bulk_results_df[(bulk_results_df['Priority'].isin(['Critical', 'High'])) | 
-                              (bulk_results_df['Lead_Time_Risk'] == 'High')])
-        ]
-    }
-    
-    summary_df = pd.DataFrame(summary_data)
-    summary_df.to_excel(writer, sheet_name='Executive Summary', index=False)
-
-def create_priority_matrix_sheet(bulk_results_df, writer):
-    """Create priority matrix analysis sheet"""
-    if not EXCEL_AVAILABLE:
-        return
-        
-    priority_analysis = bulk_results_df.groupby('Priority').agg({
-        'Item': 'count',
-        'Total_Quantity': 'sum',
-        'Reorder_Point_Likely': 'sum',
-        'Avg_Daily_Demand': 'mean',
-        'Lead_Time_Days': 'mean'
-    }).round(2)
-    
-    priority_analysis.columns = ['Item_Count', 'Total_Volume', 'Total_Reorder_Investment', 
-                               'Avg_Daily_Demand', 'Avg_Lead_Time']
-    priority_analysis.to_excel(writer, sheet_name='Priority Matrix')
-
-def create_risk_assessment_sheet(bulk_results_df, writer):
-    """Create risk assessment sheet"""
-    if not EXCEL_AVAILABLE:
-        return
-        
-    # High-risk items
-    high_risk_df = bulk_results_df[
-        (bulk_results_df['Lead_Time_Risk'] == 'High') |
-        (bulk_results_df['Demand_Variability_CV'] > 0.5) |
-        (bulk_results_df['Is_Seasonal'] == True)
-    ].copy()
-    
-    if not high_risk_df.empty:
-        high_risk_df['Risk_Factors'] = ''
-        for idx, row in high_risk_df.iterrows():
-            factors = []
-            if row['Lead_Time_Risk'] == 'High':
-                factors.append('High Lead Time')
-            if row['Demand_Variability_CV'] > 0.5:
-                factors.append('High Demand Variability')
-            if row['Is_Seasonal']:
-                factors.append('Seasonal Demand')
-            high_risk_df.at[idx, 'Risk_Factors'] = ', '.join(factors)
-        
-        risk_columns = ['Item', 'Priority', 'Lead_Time_Risk', 'Demand_Variability_CV', 
-                       'Is_Seasonal', 'Risk_Factors', 'Reorder_Point_Conservative']
-        high_risk_df[risk_columns].to_excel(writer, sheet_name='Risk Assessment', index=False)
-
-def create_action_plan_sheet(bulk_results_df, writer):
-    """Create action plan sheet with specific recommendations"""
-    if not EXCEL_AVAILABLE:
-        return
-        
-    action_items = []
-    
-    # Critical items needing immediate attention
-    critical_items = bulk_results_df[bulk_results_df['Priority'] == 'Critical']
-    for _, item in critical_items.iterrows():
-        action_items.append({
-            'Item': item['Item'],
-            'Priority': 'URGENT',
-            'Action': 'Review inventory levels immediately',
-            'Recommended_Reorder_Point': item['Reorder_Point_Conservative'],
-            'Reason': 'Critical priority item',
-            'Timeline': 'Within 24 hours'
-        })
-    
-    # High lead time risk items
-    high_lead_time = bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High']
-    for _, item in high_lead_time.iterrows():
-        if item['Priority'] != 'Critical':  # Avoid duplicates
-            action_items.append({
-                'Item': item['Item'],
-                'Priority': 'HIGH',
-                'Action': 'Negotiate shorter lead times or find backup suppliers',
-                'Recommended_Reorder_Point': item['Reorder_Point_Conservative'],
-                'Reason': 'High lead time risk',
-                'Timeline': 'Within 1 week'
-            })
-    
-    # Seasonal items
-    seasonal_items = bulk_results_df[bulk_results_df['Is_Seasonal'] == True]
-    for _, item in seasonal_items.iterrows():
-        if item['Priority'] not in ['Critical'] and item['Lead_Time_Risk'] != 'High':  # Avoid duplicates
-            action_items.append({
-                'Item': item['Item'],
-                'Priority': 'MEDIUM',
-                'Action': 'Plan seasonal inventory buildup',
-                'Recommended_Reorder_Point': item['Reorder_Point_Likely'],
-                'Reason': 'Seasonal demand pattern detected',
-                'Timeline': 'Within 2 weeks'
-            })
-    
-    if action_items:
-        action_df = pd.DataFrame(action_items)
-        action_df.to_excel(writer, sheet_name='Action Plan', index=False)
-
-def create_raw_data_summary_sheet(df, writer):
-    """Create raw data summary sheet"""
-    if not EXCEL_AVAILABLE:
-        return
-        
-    data_summary = {
-        'Metric': [
-            'Total Records',
-            'Date Range Start',
-            'Date Range End',
-            'Total Unique Items',
-            'Total Quantity Delivered',
-            'Average Order Size',
-            'Data Collection Period (Days)'
-        ],
-        'Value': [
-            len(df),
-            df['Creation Date'].min().strftime('%Y-%m-%d') if not df.empty else 'N/A',
-            df['Creation Date'].max().strftime('%Y-%m-%d') if not df.empty else 'N/A',
-            df['Item'].nunique(),
-            df['Qty Delivered'].sum(),
-            f"{df['Qty Delivered'].mean():.2f}",
-            (pd.to_datetime(df['Creation Date']).max() - pd.to_datetime(df['Creation Date']).min()).days
-        ]
-    }
-    
-    summary_df = pd.DataFrame(data_summary)
-    summary_df.to_excel(writer, sheet_name='Data Summary', index=False)
-
-def create_daily_demand_chart(daily_demand_series):
-    """Create enhanced daily demand trend chart"""
-    fig = go.Figure()
-    
-    # Add daily demand line
-    fig.add_trace(go.Scatter(
-        x=daily_demand_series.index,
-        y=daily_demand_series.values,
-        mode='lines+markers',
-        name='Daily Demand',
-        line=dict(color='#2E86AB', width=2),
-        marker=dict(size=4),
-        hovertemplate='<b>Date:</b> %{x}<br><b>Demand:</b> %{y}<extra></extra>'
-    ))
-    
-    # Add 7-day moving average if enough data
-    if len(daily_demand_series) >= 7:
-        ma_7 = daily_demand_series.rolling(window=7, center=True).mean()
-        fig.add_trace(go.Scatter(
-            x=ma_7.index,
-            y=ma_7.values,
-            mode='lines',
-            name='7-Day Moving Average',
-            line=dict(color='#F18F01', width=3),
-            hovertemplate='<b>Date:</b> %{x}<br><b>7-Day Avg:</b> %{y:.2f}<extra></extra>'
-        ))
-    
-    fig.update_layout(
-        title='📈 Daily Demand Trend Analysis',
-        xaxis_title='Date',
-        yaxis_title='Quantity Demanded',
-        hovermode='x unified',
-        showlegend=True,
-        height=400
-    )
-    
-    return fig
-
-def create_scenarios_chart(scenarios, selected_scenario=None):
-    """Create reorder point scenarios bar chart"""
-    scenario_data = {
-        'Scenario': ['Optimistic', 'Likely', 'Conservative'],
-        'Reorder Point': [scenarios['optimistic_rop'], scenarios['likely_rop'], scenarios['conservative_rop']],
-        'Colors': ['#28a745', '#007bff', '#dc3545']  # Green, Blue, Red
-    }
-    
-    fig = go.Figure()
-    
-    for i, (scenario, value, color) in enumerate(zip(scenario_data['Scenario'], scenario_data['Reorder Point'], scenario_data['Colors'])):
-        # Highlight selected scenario
-        opacity = 1.0 if selected_scenario is None or selected_scenario == scenario else 0.6
-        border_width = 3 if selected_scenario == scenario else 0
-        
-        fig.add_trace(go.Bar(
-            x=[scenario],
-            y=[value],
-            name=scenario,
-            marker=dict(
-                color=color,
-                opacity=opacity,
-                line=dict(width=border_width, color='black')
-            ),
-            text=f'{value:.1f}',
-            textposition='auto',
-            hovertemplate=f'<b>{scenario}</b><br>Reorder Point: %{{y:.2f}}<extra></extra>'
-        ))
-    
-    fig.update_layout(
-        title='🎯 Reorder Point Scenarios Comparison',
-        xaxis_title='Scenario Type',
-        yaxis_title='Reorder Point Quantity',
-        showlegend=False,
-        height=400
-    )
-    
-    return fig
-
-def display_bulk_analysis_dashboard(bulk_results_df):
-    """Display bulk analysis results dashboard"""
-    st.header("📊 Bulk Analysis Dashboard")
-    
-    # Key metrics
+    # Summary statistics
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Items", len(bulk_results_df))
+        st.metric("Items Analyzed", len(results_df))
     
     with col2:
-        critical_count = len(bulk_results_df[bulk_results_df['Priority'] == 'Critical'])
-        st.metric("Critical Items", critical_count)
+        avg_reorder_point = results_df["Reorder Point"].mean()
+        st.metric("Avg Reorder Point", f"{avg_reorder_point:.2f}")
     
     with col3:
-        total_investment = bulk_results_df['Reorder_Point_Likely'].sum()
-        st.metric("Total Investment", f"{total_investment:,.0f}")
+        high_risk_items = len(results_df[results_df["Risk Level"] == "High Risk (Low Stock)"])
+        st.metric("High Risk Items", high_risk_items)
     
     with col4:
-        high_risk_count = len(bulk_results_df[bulk_results_df['Lead_Time_Risk'] == 'High'])
-        st.metric("High Risk Items", high_risk_count)
+        total_avg_demand = results_df["Avg Daily Demand"].sum()
+        st.metric("Total Daily Demand", f"{total_avg_demand:.2f}")
     
-    # Priority distribution
-    st.subheader("🎯 Priority Distribution")
-    priority_counts = bulk_results_df['Priority'].value_counts()
+    # Risk Level Distribution
+    st.subheader("🎯 Risk Level Distribution")
+    risk_counts = results_df["Risk Level"].value_counts()
     
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.dataframe(priority_counts.to_frame('Count'))
+        st.bar_chart(risk_counts)
     
     with col2:
-        fig_pie = px.pie(
-            values=priority_counts.values,
-            names=priority_counts.index,
-            title="Items by Priority",
-            color_discrete_map={
-                'Critical': '#dc3545',
-                'High': '#fd7e14', 
-                'Medium': '#ffc107',
-                'Low': '#28a745'
-            }
+        for risk, count in risk_counts.items():
+            percentage = (count / len(results_df)) * 100
+            st.metric(risk, f"{count} ({percentage:.1f}%)")
+    
+    # Top items by reorder point
+    st.subheader("🔝 Top Items by Reorder Point")
+    top_items = results_df.nlargest(10, "Reorder Point")[["Item", "Reorder Point", "Avg Daily Demand", "Risk Level"]]
+    st.dataframe(top_items, use_container_width=True)
+    
+    # Interactive filters for detailed view
+    st.subheader("🔍 Detailed Results")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        risk_filter = st.multiselect(
+            "Filter by Risk Level:",
+            results_df["Risk Level"].unique(),
+            default=results_df["Risk Level"].unique()
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
     
-    # Top items requiring attention
-    st.subheader("🚨 Items Requiring Immediate Attention")
+    with col2:
+        sort_by = st.selectbox(
+            "Sort by:",
+            ["Reorder Point", "Avg Daily Demand", "Risk Level", "Item"]
+        )
     
-    attention_items = bulk_results_df[
-        (bulk_results_df['Priority'].isin(['Critical', 'High'])) |
-        (bulk_results_df['Lead_Time_Risk'] == 'High')
-    ].sort_values(['Priority', 'Priority_Score'], ascending=[True, False])
+    # Apply filters
+    filtered_results = results_df[results_df["Risk Level"].isin(risk_filter)]
     
-    if len(attention_items) > 0:
-        display_cols = ['Item', 'Priority', 'Priority_Score', 'Lead_Time_Risk', 
-                       'Reorder_Point_Likely', 'Avg_Daily_Demand']
-        st.dataframe(attention_items[display_cols].head(10), use_container_width=True)
+    # Sort results
+    if sort_by in ["Reorder Point", "Avg Daily Demand"]:
+        filtered_results = filtered_results.sort_values(sort_by, ascending=False)
     else:
-        st.success("✅ No items require immediate attention!")
+        filtered_results = filtered_results.sort_values(sort_by)
     
-    # Detailed data table with filters
-    st.subheader("📋 Detailed Analysis Table")
+    # Display filtered results
+    st.dataframe(
+        filtered_results,
+        use_container_width=True,
+        column_config={
+            "Avg Daily Demand": st.column_config.NumberColumn(format="%.2f"),
+            "Reorder Point": st.column_config.NumberColumn(format="%.2f"),
+            "Statistical Reorder Point": st.column_config.NumberColumn(format="%.2f"),
+        }
+    )
+    
+    # Export functionality
+    st.subheader("📥 Export Results")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        priority_filter = st.multiselect(
-            "Filter by Priority",
-            bulk_results_df['Priority'].unique(),
-            default=bulk_results_df['Priority'].unique()
+        # Excel export
+        def create_excel_file(df):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Bulk Analysis Results', index=False)
+                
+                # Add summary sheet
+                summary_data = {
+                    'Metric': ['Total Items', 'High Risk Items', 'Low Risk Items', 'Balanced Items', 
+                              'Average Reorder Point', 'Total Daily Demand'],
+                    'Value': [
+                        len(df),
+                        len(df[df["Risk Level"] == "High Risk (Low Stock)"]),
+                        len(df[df["Risk Level"] == "Low Risk (High Stock)"]),
+                        len(df[df["Risk Level"] == "Balanced"]),
+                        f"{df['Reorder Point'].mean():.2f}",
+                        f"{df['Avg Daily Demand'].sum():.2f}"
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            return output.getvalue()
+        
+        excel_data = create_excel_file(filtered_results)
+        st.download_button(
+            label="📊 Download Excel",
+            data=excel_data,
+            file_name=f"bulk_reorder_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     
     with col2:
-        risk_filter = st.multiselect(
-            "Filter by Lead Time Risk",
-            bulk_results_df['Lead_Time_Risk'].unique(),
-            default=bulk_results_df['Lead_Time_Risk'].unique()
+        # CSV export
+        csv_data = filtered_results.to_csv(index=False)
+        st.download_button(
+            label="📄 Download CSV",
+            data=csv_data,
+            file_name=f"bulk_reorder_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
         )
     
     with col3:
-        min_demand = st.number_input(
-            "Minimum Daily Demand",
-            min_value=0.0,
-            value=0.0,
-            step=0.1
+        # JSON export
+        json_data = filtered_results.to_json(orient='records', indent=2)
+        st.download_button(
+            label="🔗 Download JSON",
+            data=json_data,
+            file_name=f"bulk_reorder_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json"
         )
-    
-    # Apply filters
-    filtered_df = bulk_results_df[
-        (bulk_results_df['Priority'].isin(priority_filter)) &
-        (bulk_results_df['Lead_Time_Risk'].isin(risk_filter)) &
-        (bulk_results_df['Avg_Daily_Demand'] >= min_demand)
-    ]
-    
-    st.dataframe(filtered_df, use_container_width=True, height=400)
 
 def display(df):
-    """Main function to display the reorder point prediction dashboard"""
-    # Initialize session state
-    if 'start_bulk_analysis' not in st.session_state:
-        st.session_state['start_bulk_analysis'] = False
-    if 'bulk_analysis_complete' not in st.session_state:
-        st.session_state['bulk_analysis_complete'] = False
+    st.header("Smart Reorder Point Prediction")
     
-    # Show Excel availability warning here if needed
-    if not EXCEL_AVAILABLE:
-        st.sidebar.warning("⚠️ openpyxl not available. Excel export will be disabled. Install with: `pip install openpyxl`")
-    
-    # Header
-    st.title("🎯 Smart Reorder Point Prediction")
-    st.markdown("Advanced procurement analytics with bulk analysis and Excel export")
-    st.markdown("---")
-    
-    # Validate required columns
-    required_columns = ['Item', 'Qty Delivered', 'Creation Date']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    
-    if missing_columns:
-        st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
-        return
-    
-    if df["Item"].dropna().empty:
-        st.error("❌ No items found in the dataset.")
-        return
-    
-    # Main navigation
-    analysis_mode = st.sidebar.radio(
-        "Analysis Mode",
-        ["Single Item Analysis", "Bulk Analysis"],
-        help="Choose between analyzing individual items or all items at once"
-    )
-    
-    if analysis_mode == "Bulk Analysis":
-        # Bulk Analysis Section
-        st.header("📊 Bulk Analysis - All Items")
-        st.markdown("Analyze all items in your dataset with comprehensive reporting and Excel export.")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            if st.button("🚀 Start Bulk Analysis", type="primary"):
-                st.session_state['start_bulk_analysis'] = True
-        
-        with col2:
-            st.info(f"📦 {len(df['Item'].unique())} items will be analyzed")
-        
-        # Perform bulk analysis
-        if st.session_state.get('start_bulk_analysis', False):
-            with st.spinner("🔄 Analyzing all items... This may take a few minutes."):
-                # Progress tracking
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                def progress_callback(current, total, item_name):
-                    progress = current / total
-                    progress_bar.progress(progress)
-                    status_text.text(f"Analyzing item {current}/{total}: {item_name}")
-                
-                # Run bulk analysis
-                bulk_results = perform_bulk_analysis(df, progress_callback)
-                
-                # Clear progress indicators
-                progress_bar.empty()
-                status_text.empty()
-                
-                if bulk_results is not None and not bulk_results.empty:
-                    st.success(f"✅ Successfully analyzed {len(bulk_results)} items!")
-                    
-                    # Store results in session state
-                    st.session_state['bulk_results'] = bulk_results
-                    st.session_state['bulk_analysis_complete'] = True
-                    
-                    # Display dashboard
-                    display_bulk_analysis_dashboard(bulk_results)
-                    
-                    # Excel Export Section
-                    st.markdown("---")
-                    st.subheader("📤 Export Options")
-                    
-                    if EXCEL_AVAILABLE:
-                        # Excel export available
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            # Generate Excel report
-                            excel_buffer = create_excel_report(bulk_results, df)
-                            
-                            if excel_buffer is not None:
-                                st.download_button(
-                                    label="📊 Download Complete Excel Report",
-                                    data=excel_buffer.getvalue(),
-                                    file_name=f"inventory_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    help="Download comprehensive Excel report with multiple sheets",
-                                    type="primary"
-                                )
-                        
-                        with col2:
-                            # CSV export option
-                            csv_buffer = bulk_results.to_csv(index=False)
-                            st.download_button(
-                                label="📋 Download CSV Data",
-                                data=csv_buffer,
-                                file_name=f"bulk_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                mime="text/csv",
-                                help="Download raw data in CSV format"
-                            )
-                        
-                        with col3:
-                            # Critical items only export
-                            critical_items = bulk_results[bulk_results['Priority'] == 'Critical']
-                            if not critical_items.empty:
-                                critical_csv = critical_items.to_csv(index=False)
-                                st.download_button(
-                                    label="🚨 Download Critical Items Only",
-                                    data=critical_csv,
-                                    file_name=f"critical_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="Download only critical priority items"
-                                )
-                            else:
-                                st.info("No critical items found")
-                        
-                        # Excel report contents explanation
-                        with st.expander("📋 Excel Report Contents", expanded=False):
-                            st.markdown("""
-                            **The Excel report contains 6 sheets:**
-                            
-                            1. **Executive Summary** - High-level metrics and KPIs
-                            2. **Detailed Analysis** - Complete analysis for all items
-                            3. **Priority Matrix** - Items grouped by priority level
-                            4. **Risk Assessment** - High-risk items requiring attention
-                            5. **Action Plan** - Specific recommendations with timelines
-                            6. **Data Summary** - Raw data statistics and quality metrics
-                            
-                            Perfect for sharing with management and procurement teams!
-                            """)
-                    
-                    else:
-                        # Excel not available - provide CSV alternatives
-                        st.warning("📊 Excel export not available. Providing CSV alternatives:")
-                        
-                        csv_bundle = create_csv_bundle(bulk_results, df)
-                        
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            # Executive Summary CSV
-                            if 'executive_summary' in csv_bundle:
-                                st.download_button(
-                                    label="📈 Executive Summary (CSV)",
-                                    data=csv_bundle['executive_summary'],
-                                    file_name=f"executive_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="High-level metrics and KPIs"
-                                )
-                        
-                        with col2:
-                            # Detailed Analysis CSV
-                            if 'detailed_analysis' in csv_bundle:
-                                st.download_button(
-                                    label="📋 Detailed Analysis (CSV)",
-                                    data=csv_bundle['detailed_analysis'],
-                                    file_name=f"detailed_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="Complete analysis for all items"
-                                )
-                        
-                        with col3:
-                            # Priority Matrix CSV
-                            if 'priority_matrix' in csv_bundle:
-                                st.download_button(
-                                    label="🎯 Priority Matrix (CSV)",
-                                    data=csv_bundle['priority_matrix'],
-                                    file_name=f"priority_matrix_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv",
-                                    help="Items grouped by priority level"
-                                )
-                else:
-                    st.error("❌ Bulk analysis failed. Please check your data format and try again.")
-                    st.session_state['start_bulk_analysis'] = False
-        
-        # Show previous results if available
-        elif st.session_state.get('bulk_analysis_complete', False):
-            if st.button("🔍 Show Previous Bulk Analysis Results"):
-                if 'bulk_results' in st.session_state:
-                    display_bulk_analysis_dashboard(st.session_state['bulk_results'])
-                    
-                    # Re-enable export options
-                    st.markdown("---")
-                    st.subheader("📤 Export Previous Results")
-                    
-                    bulk_results = st.session_state['bulk_results']
-                    
-                    if EXCEL_AVAILABLE:
-                        excel_buffer = create_excel_report(bulk_results, df)
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if excel_buffer is not None:
-                                st.download_button(
-                                    label="📊 Download Excel Report",
-                                    data=excel_buffer.getvalue(),
-                                    file_name=f"inventory_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
-                        
-                        with col2:
-                            csv_buffer = bulk_results.to_csv(index=False)
-                            st.download_button(
-                                label="📋 Download CSV Data", 
-                                data=csv_buffer,
-                                file_name=f"bulk_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                mime="text/csv"
-                            )
-                    else:
-                        # Provide CSV alternatives
-                        st.warning("📊 Excel export not available. Download CSV files:")
-                        
-                        csv_bundle = create_csv_bundle(bulk_results, df)
-                        
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            if 'detailed_analysis' in csv_bundle:
-                                st.download_button(
-                                    label="📋 Detailed Analysis (CSV)",
-                                    data=csv_bundle['detailed_analysis'],
-                                    file_name=f"detailed_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv"
-                                )
-                        
-                        with col2:
-                            if 'executive_summary' in csv_bundle:
-                                st.download_button(
-                                    label="📈 Executive Summary (CSV)",
-                                    data=csv_bundle['executive_summary'],
-                                    file_name=f"executive_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv"
-                                )
-                        
-                        with col3:
-                            if 'priority_matrix' in csv_bundle:
-                                st.download_button(
-                                    label="🎯 Priority Matrix (CSV)",
-                                    data=csv_bundle['priority_matrix'],
-                                    file_name=f"priority_matrix_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                    mime="text/csv"
-                                )
-                else:
-                    st.warning("Previous results not found. Please run bulk analysis again.")
-        
-        return  # Exit here for bulk analysis mode
-    
-    # Single Item Analysis Mode
-    st.header("📦 Single Item Analysis")
-    
-    # User selects an item to analyze
-    item = st.selectbox("Select Item", df["Item"].dropna().unique())
-    
-    # Filter the dataset for that item
-    item_df = df[df["Item"] == item].copy()
-    
-    if len(item_df) == 0:
-        st.warning("⚠️ No data available for the selected item.")
-        return
-    
-    # Calculate metrics
-    metrics = calculate_metrics(item_df)
-    
-    if metrics is None:
-        st.error("❌ Unable to calculate metrics for this item")
-        return
-    
-    # Display key metrics
-    st.subheader("📊 Key Performance Indicators")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Average Daily Demand", f"{metrics['avg_daily_demand']:.2f}")
-    
-    with col2:
-        st.metric("Average Lead Time", f"{metrics['lead_time']:.1f} days")
-    
-    with col3:
-        st.metric("Safety Stock", f"{metrics['safety_stock']:.2f}")
-    
-    with col4:
-        st.metric("Final Suggested Reorder Point", f"{metrics['likely_rop']:.2f}")
-    
-    # Visualizations
-    st.subheader("📈 Visual Analysis")
-    
-    # Row 1: Daily demand and scenarios
+    # Region and Currency Selection
+    st.subheader("📍 Region & Currency Settings")
     col1, col2 = st.columns(2)
     
     with col1:
-        demand_chart = create_daily_demand_chart(metrics['daily_demand_series'])
-        st.plotly_chart(demand_chart, use_container_width=True)
+        # Get unique regions from the dataframe
+        regions = df["Region"].dropna().unique() if "Region" in df.columns else ["AGC", "UAE", "KSA"]
+        selected_region = st.selectbox("Select Region", regions)
     
     with col2:
-        scenarios_chart = create_scenarios_chart(metrics)
-        st.plotly_chart(scenarios_chart, use_container_width=True)
-    
-    # Calculations details
-    with st.expander("🧮 Calculation Details"):
-        st.write(f"**Service Level:** 95% (Z-score: 1.65)")
-        st.write(f"**Formula:** ROP = (Daily Demand × Lead Time) + Safety Stock")
-        st.write(f"**Calculation:** {metrics['avg_daily_demand']:.2f} × {metrics['lead_time']:.1f} + {metrics['safety_stock']:.2f} = {metrics['likely_rop']:.2f}")
+        # Comprehensive global currency mapping
+        currency_map = {
+            # Middle East & Africa
+            "AGC": "AED", "UAE": "AED", "Dubai": "AED", "Abu Dhabi": "AED",
+            "KSA": "SAR", "Saudi Arabia": "SAR", "Riyadh": "SAR", "Jeddah": "SAR",
+            "Qatar": "QAR", "Kuwait": "KWD", "Bahrain": "BHD", "Oman": "OMR",
+            "Egypt": "EGP", "South Africa": "ZAR", "Morocco": "MAD", "Nigeria": "NGN",
+            "Kenya": "KES", "Ghana": "GHS", "Tunisia": "TND", "Jordan": "JOD",
+            "Lebanon": "LBP", "Iraq": "IQD", "Iran": "IRR", "Israel": "ILS",
+            
+            # North America
+            "USA": "USD", "US": "USD", "United States": "USD", "America": "USD",
+            "Canada": "CAD", "Mexico": "MXN",
+            
+            # Europe
+            "Germany": "EUR", "France": "EUR", "Italy": "EUR", "Spain": "EUR",
+            "Netherlands": "EUR", "Belgium": "EUR", "Austria": "EUR", "Portugal": "EUR",
+            "Ireland": "EUR", "Finland": "EUR", "Greece": "EUR", "Luxembourg": "EUR",
+            "UK": "GBP", "United Kingdom": "GBP", "Britain": "GBP", "England": "GBP",
+            "Switzerland": "CHF", "Norway": "NOK", "Sweden": "SEK", "Denmark": "DKK",
+            "Poland": "PLN", "Czech Republic": "CZK", "Hungary": "HUF", "Romania": "RON",
+            "Russia": "RUB", "Ukraine": "UAH", "Turkey": "TRY",
+            
+            # Asia Pacific
+            "China": "CNY", "Japan": "JPY", "South Korea": "KRW", "India": "INR",
+            "Singapore": "SGD", "Hong Kong": "HKD", "Taiwan": "TWD", "Thailand": "THB",
+            "Malaysia": "MYR", "Indonesia": "IDR", "Philippines": "PHP", "Vietnam": "VND",
+            "Australia": "AUD", "New Zealand": "NZD", "Pakistan": "PKR", "Bangladesh": "BDT",
+            "Sri Lanka": "LKR", "Myanmar": "MMK", "Cambodia": "KHR", "Laos": "LAK",
+            
+            # Latin America
+            "Brazil": "BRL", "Argentina": "ARS", "Chile": "CLP", "Colombia": "COP",
+            "Peru": "PEN", "Venezuela": "VES", "Ecuador": "USD", "Uruguay": "UYU",
+            "Paraguay": "PYG", "Bolivia": "BOB", "Costa Rica": "CRC", "Panama": "PAB",
+            "Guatemala": "GTQ", "Honduras": "HNL", "Nicaragua": "NIO", "El Salvador": "USD",
+            "Dominican Republic": "DOP", "Jamaica": "JMD", "Trinidad": "TTD",
+            
+            # Other regions
+            "EUR": "EUR", "Europe": "EUR"
+        }
         
-        st.write(f"**Data Period:** {metrics['date_range_days']} days with {metrics['total_orders']} orders")
+        # Get currency for selected region
+        display_currency = currency_map.get(selected_region, "USD")  # Default to USD
+        
+        # Allow manual currency override if needed
+        st.metric("Currency", display_currency)
+        
+        # Optional: Allow users to override currency if mapping is incorrect
+        with st.expander("🔧 Override Currency (if needed)"):
+            all_currencies = sorted(list(set(currency_map.values())))
+            override_currency = st.selectbox(
+                "Select different currency:", 
+                ["Use Auto-Detected"] + all_currencies,
+                help="Override the auto-detected currency if incorrect"
+            )
+            if override_currency != "Use Auto-Detected":
+                display_currency = override_currency
+    
+    # Filter data by selected region
+    if "Region" in df.columns:
+        region_df = df[df["Region"] == selected_region].copy()
+    else:
+        region_df = df.copy()  # Use all data if no region column
+    
+    if region_df.empty:
+        st.warning(f"No data available for region: {selected_region}")
+        return
+    
+    # Vendor Selection with Select All/Deselect All
+    if "Vendor" in region_df.columns:
+        st.subheader("🏢 Vendor Selection")
+        
+        vendors = region_df["Vendor"].dropna().unique().tolist()
+        
+        # Select All / Deselect All buttons
+        col1, col2, col3 = st.columns([1, 1, 4])
+        
+        with col1:
+            if st.button("Select All"):
+                st.session_state.selected_vendors = vendors
+        
+        with col2:
+            if st.button("Deselect All"):
+                st.session_state.selected_vendors = []
+        
+        # Initialize session state for vendors
+        if 'selected_vendors' not in st.session_state:
+            st.session_state.selected_vendors = vendors
+        
+        selected_vendors = st.multiselect(
+            "Select Vendors",
+            vendors,
+            default=st.session_state.selected_vendors,
+            key="vendor_multiselect"
+        )
+        
+        # Update session state
+        st.session_state.selected_vendors = selected_vendors
+        
+        # Filter by selected vendors
+        if selected_vendors:
+            region_df = region_df[region_df["Vendor"].isin(selected_vendors)]
+        else:
+            st.warning("Please select at least one vendor.")
+            return
+    
+    # Analysis Mode Selection
+    st.subheader("📊 Analysis Mode")
+    analysis_mode = st.radio(
+        "Choose Analysis Type:",
+        ["🎯 Single Item Analysis", "📋 Bulk Analysis"],
+        horizontal=True
+    )
+    
+    available_items = region_df["Item"].dropna().unique()
+    if len(available_items) == 0:
+        st.warning("No items available for the selected filters.")
+        return
+    
+    if analysis_mode == "🎯 Single Item Analysis":
+        # Single Item Analysis with Search
+        st.subheader("📦 Single Item Analysis")
+        
+        # Search functionality
+        search_term = st.text_input(
+            "🔍 Search for Item:", 
+            placeholder="Type to search items...",
+            help="Search by item name, code, or description"
+        )
+        
+        # Filter items based on search
+        if search_term:
+            filtered_items = [item for item in available_items if search_term.lower() in str(item).lower()]
+            if not filtered_items:
+                st.warning(f"No items found matching '{search_term}'")
+                return
+        else:
+            filtered_items = available_items
+        
+        selected_item = st.selectbox("Select Item", filtered_items)
+        
+        # Single item analysis (existing code will continue here)
+        
+    else:
+        # Bulk Analysis
+        st.subheader("📋 Bulk Analysis")
+        
+        # Search and filter for bulk selection
+        search_term_bulk = st.text_input(
+            "🔍 Search Items for Bulk Analysis:", 
+            placeholder="Type to filter items for bulk analysis...",
+            key="bulk_search"
+        )
+        
+        # Filter items based on search
+        if search_term_bulk:
+            filtered_items_bulk = [item for item in available_items if search_term_bulk.lower() in str(item).lower()]
+        else:
+            filtered_items_bulk = available_items
+        
+        # Bulk selection controls
+        col1, col2, col3 = st.columns([1, 1, 4])
+        
+        with col1:
+            if st.button("Select All Items"):
+                st.session_state.selected_bulk_items = filtered_items_bulk.tolist()
+        
+        with col2:
+            if st.button("Clear Selection"):
+                st.session_state.selected_bulk_items = []
+        
+        # Initialize session state for bulk items
+        if 'selected_bulk_items' not in st.session_state:
+            st.session_state.selected_bulk_items = filtered_items_bulk[:10].tolist()  # Default to first 10
+        
+        selected_bulk_items = st.multiselect(
+            "Select Items for Bulk Analysis:",
+            filtered_items_bulk,
+            default=st.session_state.selected_bulk_items,
+            key="bulk_items_multiselect",
+            help="Select multiple items to analyze simultaneously"
+        )
+        
+        # Update session state
+        st.session_state.selected_bulk_items = selected_bulk_items
+        
+        if not selected_bulk_items:
+            st.warning("Please select at least one item for bulk analysis.")
+            return
+        
+        # Bulk analysis parameters
+        st.subheader("⚙️ Bulk Analysis Parameters")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            bulk_lead_time = st.number_input(
+                "Default Lead Time (days)", 
+                min_value=1, 
+                max_value=365, 
+                value=14,
+                key="bulk_lead_time"
+            )
+        
+        with col2:
+            bulk_safety_stock = st.number_input(
+                "Default Safety Stock (days)", 
+                min_value=0, 
+                max_value=90, 
+                value=7,
+                key="bulk_safety_stock"
+            )
+        
+        with col3:
+            analysis_period = st.selectbox(
+                "Analysis Period",
+                ["Last 30 days", "Last 60 days", "Last 90 days", "Last 180 days", "All available data"],
+                index=2
+            )
+        
+        # Run bulk analysis
+        if st.button("🚀 Run Bulk Analysis", type="primary"):
+            with st.spinner("Analyzing items... This may take a moment."):
+                bulk_results = perform_bulk_analysis(
+                    region_df, selected_bulk_items, bulk_lead_time, 
+                    bulk_safety_stock, analysis_period, display_currency
+                )
+                
+                if bulk_results is not None:
+                    display_bulk_results(bulk_results, display_currency)
+        
+        selected_item = st.selectbox("Select Item", filtered_items)
+        
+        # Filter the dataset for selected item
+        item_df = region_df[region_df["Item"] == selected_item].copy()
+        
+        if item_df.empty:
+            st.warning(f"No data available for item: {selected_item}")
+            return
+        
+        # Reorder Point Parameters
+        st.subheader("⚙️ Reorder Point Parameters")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            lead_time_days = st.number_input(
+                "Lead Time (days)", 
+                min_value=1, 
+                max_value=365, 
+                value=14, 
+                help="Average time between placing an order and receiving it"
+            )
+        
+        with col2:
+            safety_stock_days = st.number_input(
+                "Safety Stock (days)", 
+                min_value=0, 
+                max_value=90, 
+                value=7, 
+                help="Additional buffer stock to account for demand variability"
+            )
+        
+        # Data Processing and Analysis
+        st.subheader("📊 Key Performance Indicators")
+        
+        try:
+            # Convert Creation Date to datetime
+            item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"])
+            
+            # Calculate daily demand
+            daily_demand = item_df.groupby(item_df["Creation Date"].dt.date)["Qty Delivered"].sum()
+            
+            # Calculate average daily demand
+            avg_daily_demand = daily_demand.mean()
+            
+            # Calculate demand standard deviation for safety stock calculation
+            demand_std = daily_demand.std()
+            
+            # Enhanced Reorder Point Calculation
+            # Formula: Average Daily Demand × Lead Time + Safety Stock
+            lead_time_demand = avg_daily_demand * lead_time_days
+            safety_stock = avg_daily_demand * safety_stock_days
+            reorder_point = lead_time_demand + safety_stock
+            
+            # Alternative safety stock using statistical method
+            statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65  # 95% service level
+            statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            
+            # Display Key Metrics (matching the screenshot style)
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Average Daily Demand", 
+                    f"{avg_daily_demand:.2f}",
+                    help="Average quantity demanded per day"
+                )
+            
+            with col2:
+                st.metric(
+                    "Average Lead Time", 
+                    f"{lead_time_days} days",
+                    help="Expected lead time for procurement"
+                )
+            
+            with col3:
+                st.metric(
+                    "Safety Stock", 
+                    f"{safety_stock:.2f}",
+                    help="Buffer stock for demand variability"
+                )
+            
+            with col4:
+                st.metric(
+                    "Final Suggested Reorder Point", 
+                    f"{reorder_point:.2f}",
+                    help="Recommended reorder point"
+                )
+            
+            # Visual Analysis Section (matching screenshot)
+            st.subheader("📈 Visual Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**📊 Daily Demand Trend Analysis**")
+                
+                # Prepare data for trend analysis
+                daily_demand_df = daily_demand.reset_index()
+                daily_demand_df.columns = ['Date', 'Daily Demand']
+                daily_demand_df['Date'] = pd.to_datetime(daily_demand_df['Date'])
+                
+                # Calculate 7-day moving average
+                daily_demand_df['7-Day Moving Average'] = daily_demand_df['Daily Demand'].rolling(window=7, center=True).mean()
+                
+                # Create chart data
+                chart_data = daily_demand_df.set_index('Date')[['Daily Demand', '7-Day Moving Average']]
+                st.line_chart(chart_data)
+            
+            with col2:
+                st.write("**🎯 Reorder Point Scenarios Comparison**")
+                
+                # Calculate different scenarios (matching screenshot)
+                optimistic_rp = reorder_point * 0.6  # More optimistic
+                likely_rp = reorder_point  # Current calculation
+                conservative_rp = reorder_point * 1.4  # More conservative
+                
+                # Create scenario comparison data
+                scenarios_data = {
+                    'Optimistic': optimistic_rp,
+                    'Likely': likely_rp,
+                    'Conservative': conservative_rp
+                }
+                
+                scenarios_df = pd.DataFrame(list(scenarios_data.items()), columns=['Scenario Type', 'Reorder Point Quantity'])
+                
+                # Display as bar chart
+                st.bar_chart(scenarios_df.set_index('Scenario Type'))
+                
+                # Display scenario values
+                st.write("**Scenario Values:**")
+                for scenario, value in scenarios_data.items():
+                    st.write(f"• {scenario}: {value:.1f}")
+            
+            # Additional Statistics
+            st.subheader("📋 Detailed Statistics")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Minimum Daily Demand", f"{daily_demand.min():.2f}")
+                st.metric("Maximum Daily Demand", f"{daily_demand.max():.2f}")
+                st.metric("Total Analysis Days", len(daily_demand))
+            
+            with col2:
+                st.metric("Demand Standard Deviation", f"{demand_std:.2f}")
+                st.metric("Statistical Reorder Point", f"{statistical_reorder_point:.2f}")
+                st.metric("Demand Variability", f"{(demand_std/avg_daily_demand)*100:.1f}%")
+            
+            # Monthly aggregation for additional insight
+            item_df["Month"] = item_df["Creation Date"].dt.to_period("M")
+            monthly_demand = item_df.groupby("Month")["Qty Delivered"].sum()
+            
+            if len(monthly_demand) > 1:
+                st.subheader("📅 Monthly Demand Pattern")
+                monthly_df = monthly_demand.reset_index()
+                monthly_df['Month'] = monthly_df['Month'].astype(str)
+                monthly_df.columns = ['Month', 'Monthly Demand']
+                st.bar_chart(monthly_df.set_index('Month'))
+            
+            # Summary Table
+            st.subheader("📋 Analysis Summary")
+            
+            summary_data = {
+                "Metric": [
+                    "Selected Region",
+                    "Currency",
+                    "Selected Item",
+                    "Analysis Period",
+                    "Total Days with Data",
+                    "Average Daily Demand",
+                    "Lead Time (days)",
+                    "Safety Stock (days)", 
+                    "Recommended Reorder Point",
+                    "Statistical Reorder Point",
+                    "Risk Assessment"
+                ],
+                "Value": [
+                    selected_region,
+                    display_currency,
+                    selected_item,
+                    f"{daily_demand.index.min()} to {daily_demand.index.max()}",
+                    len(daily_demand),
+                    f"{avg_daily_demand:.2f}",
+                    lead_time_days,
+                    safety_stock_days,
+                    f"{reorder_point:.2f}",
+                    f"{statistical_reorder_point:.2f}",
+                    "Balanced" if abs(reorder_point - statistical_reorder_point) < statistical_reorder_point * 0.2 else "Review Needed"
+                ]
+            }
+            
+            summary_df = pd.DataFrame(summary_data)
+            st.table(summary_df)
+            
+            # Recommendations
+            st.subheader("💡 Smart Recommendations")
+            
+            if reorder_point > statistical_reorder_point * 1.2:
+                st.info("🔍 Your current safety stock setting is conservative. Consider the statistical reorder point for cost optimization.")
+            elif reorder_point < statistical_reorder_point * 0.8:
+                st.warning("⚠️ Your safety stock might be too low. Consider increasing it to avoid stockouts.")
+            else:
+                st.success("✅ Your reorder point settings appear balanced between cost and service level.")
+            
+            # Export single item results
+            st.subheader("📥 Export Analysis")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Create single item export data
+                export_data = {
+                    'Item': [selected_item],
+                    'Region': [selected_region],
+                    'Currency': [display_currency],
+                    'Average Daily Demand': [avg_daily_demand],
+                    'Lead Time (days)': [lead_time_days],
+                    'Safety Stock': [safety_stock],
+                    'Reorder Point': [reorder_point],
+                    'Statistical Reorder Point': [statistical_reorder_point],
+                    'Analysis Date': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+                }
+                export_df = pd.DataFrame(export_data)
+                
+                csv_data = export_df.to_csv(index=False)
+                st.download_button(
+                    label="📄 Download Analysis (CSV)",
+                    data=csv_data,
+                    file_name=f"reorder_analysis_{selected_item}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+            
+            with col2:
+                # Create detailed export with daily data
+                detailed_export = daily_demand_df.copy()
+                detailed_export['Item'] = selected_item
+                detailed_export['Region'] = selected_region
+                detailed_export['Currency'] = display_currency
+                detailed_export['Reorder Point'] = reorder_point
+                
+                detailed_csv = detailed_export.to_csv(index=False)
+                st.download_button(
+                    label="📊 Download Detailed Data (CSV)",
+                    data=detailed_csv,
+                    file_name=f"detailed_analysis_{selected_item}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+                
+        except Exception as e:
+            st.error(f"Error in analysis: {str(e)}")
+            st.info("Please check your data format and ensure 'Creation Date' and 'Qty Delivered' columns are present.")
+
+# Example usage (uncomment to test)
+# if __name__ == "__main__":
+#     # Sample data for testing
+#     sample_data = {
+#         'Item': ['Item A'] * 100,
+#         'Creation Date': pd.date_range('2024-01-01', periods=100, freq='D'),
+#         'Qty Delivered': np.random.randint(10, 50, 100),
+#         'Region': ['AGC'] * 100,
+#         'Vendor': ['Vendor 1'] * 50 + ['Vendor 2'] * 50
+#     }
+#     df = pd.DataFrame(sample_data)
+#     display(df)
