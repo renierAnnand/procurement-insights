@@ -456,14 +456,163 @@ def display(df):
                         )
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        # Export opportunities (keep raw numbers for Excel compatibility)
-                        csv = opportunities_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Export Contract Opportunities",
-                            data=csv,
-                            file_name=f"contract_opportunities_{selected_region}_{selected_currency}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
+                        # Enhanced Export with Additional Actionable Data
+                        enhanced_export_df = opportunities_df.copy()
+                        
+                        # Add regional and currency context
+                        enhanced_export_df['Region'] = selected_region
+                        enhanced_export_df['Currency'] = selected_currency
+                        enhanced_export_df['Currency_Symbol'] = currency_symbol
+                        
+                        # Add implementation details
+                        enhanced_export_df['Implementation_Phase'] = enhanced_export_df.apply(
+                            lambda row: 'Phase 1 (0-3 months)' if row['Contract Priority'] == 'High Priority' and row['Annual Spend'] > 100000
+                            else 'Phase 2 (3-6 months)' if row['Contract Priority'] == 'High Priority'
+                            else 'Phase 3 (6-9 months)' if row['Contract Priority'] == 'Medium Priority'
+                            else 'Phase 4 (9-12 months)', axis=1
                         )
+                        
+                        # Add recommended contract type
+                        enhanced_export_df['Recommended_Contract_Type'] = enhanced_export_df.apply(
+                            lambda row: 'Volume Commitment' if row['Annual Spend'] > 200000 and row['Demand Predictability'] > 0.7
+                            else 'Fixed Price Contract' if row['Price Stability'] > 0.8
+                            else 'Blanket Purchase Order' if row['Order Frequency'] > 12
+                            else 'Requirements Contract', axis=1
+                        )
+                        
+                        # Add contract duration recommendation
+                        enhanced_export_df['Recommended_Duration_Months'] = enhanced_export_df.apply(
+                            lambda row: 36 if row['Annual Spend'] > 500000 and row['Vendor Performance'] > 0.8
+                            else 24 if row['Annual Spend'] > 100000 and row['Vendor Performance'] > 0.7
+                            else 18 if row['Annual Spend'] > 50000
+                            else 12, axis=1
+                        )
+                        
+                        # Add estimated savings potential
+                        enhanced_export_df['Estimated_Annual_Savings'] = enhanced_export_df.apply(
+                            lambda row: row['Annual Spend'] * (
+                                0.15 if row['Contract Priority'] == 'High Priority' and row['Annual Spend'] > 200000
+                                else 0.10 if row['Contract Priority'] == 'High Priority'
+                                else 0.08 if row['Contract Priority'] == 'Medium Priority'
+                                else 0.05
+                            ), axis=1
+                        )
+                        
+                        # Add risk assessment
+                        enhanced_export_df['Risk_Level'] = enhanced_export_df.apply(
+                            lambda row: 'Low' if row['Vendor Performance'] > 0.8 and row['Price Stability'] > 0.7
+                            else 'Medium' if row['Vendor Performance'] > 0.6 and row['Price Stability'] > 0.5
+                            else 'High', axis=1
+                        )
+                        
+                        # Add procurement urgency
+                        enhanced_export_df['Procurement_Urgency'] = enhanced_export_df.apply(
+                            lambda row: 'Immediate' if row['Contract Priority'] == 'High Priority' and row['Annual Spend'] > 200000
+                            else 'High' if row['Contract Priority'] == 'High Priority'
+                            else 'Medium' if row['Contract Priority'] == 'Medium Priority'
+                            else 'Low', axis=1
+                        )
+                        
+                        # Add resource requirements
+                        enhanced_export_df['Resource_Requirement'] = enhanced_export_df.apply(
+                            lambda row: 'Senior Procurement Manager' if row['Annual Spend'] > 500000
+                            else 'Procurement Manager' if row['Annual Spend'] > 100000
+                            else 'Procurement Specialist', axis=1
+                        )
+                        
+                        # Add vendor category based on performance
+                        enhanced_export_df['Vendor_Category'] = enhanced_export_df.apply(
+                            lambda row: 'Strategic Partner' if row['Vendor Performance'] > 0.8 and row['Annual Spend'] > 200000
+                            else 'Preferred Vendor' if row['Vendor Performance'] > 0.7
+                            else 'Standard Vendor' if row['Vendor Performance'] > 0.5
+                            else 'Development Required', axis=1
+                        )
+                        
+                        # Add contract complexity
+                        enhanced_export_df['Contract_Complexity'] = enhanced_export_df.apply(
+                            lambda row: 'Complex' if row['Annual Spend'] > 500000 or row['Vendor Performance'] < 0.6
+                            else 'Moderate' if row['Annual Spend'] > 100000 or row['Order Frequency'] > 20
+                            else 'Simple', axis=1
+                        )
+                        
+                        # Add ROI estimate
+                        enhanced_export_df['Estimated_ROI_Percent'] = enhanced_export_df.apply(
+                            lambda row: (row['Estimated_Annual_Savings'] * 3) / 5000 * 100 if row['Annual Spend'] > 0 else 0, axis=1
+                        )
+                        
+                        # Add next steps
+                        enhanced_export_df['Next_Steps'] = enhanced_export_df.apply(
+                            lambda row: 'Immediate vendor negotiation + legal review' if row['Procurement_Urgency'] == 'Immediate'
+                            else 'Schedule vendor meeting + market analysis' if row['Procurement_Urgency'] == 'High'
+                            else 'Vendor performance review + RFQ preparation' if row['Procurement_Urgency'] == 'Medium'
+                            else 'Monitor and evaluate for future contracting', axis=1
+                        )
+                        
+                        # Add export timestamp and analyst info
+                        enhanced_export_df['Export_Date'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                        enhanced_export_df['Analysis_Period'] = analysis_period
+                        enhanced_export_df['Min_Spend_Threshold'] = min_spend
+                        enhanced_export_df['Min_Frequency_Threshold'] = min_frequency
+                        
+                        # Reorder columns for better readability
+                        column_order = [
+                            # Context & Identification
+                            'Region', 'Currency', 'Currency_Symbol', 'Vendor Name', 'Item', 'Item Description',
+                            # Financial Analysis
+                            'Annual Spend', 'Avg Unit Price', 'Estimated_Annual_Savings', 'Estimated_ROI_Percent',
+                            # Performance & Risk
+                            'Vendor Performance', 'Price Stability', 'Risk_Level', 'Vendor_Category',
+                            # Suitability & Priority
+                            'Suitability Score', 'Contract Priority', 'Procurement_Urgency', 'Demand Predictability',
+                            # Implementation Planning
+                            'Recommended_Contract_Type', 'Recommended_Duration_Months', 'Implementation_Phase',
+                            'Contract_Complexity', 'Resource_Requirement', 'Next_Steps',
+                            # Operational Details
+                            'Order Frequency', 'Monthly Frequency',
+                            # Metadata
+                            'Export_Date', 'Analysis_Period', 'Min_Spend_Threshold', 'Min_Frequency_Threshold'
+                        ]
+                        
+                        # Reorder dataframe
+                        enhanced_export_df = enhanced_export_df[column_order]
+                        
+                        # Create both detailed and summary exports
+                        detailed_csv = enhanced_export_df.to_csv(index=False)
+                        
+                        # Create executive summary
+                        summary_data = {
+                            'Region': [selected_region],
+                            'Currency': [selected_currency],
+                            'Total_Opportunities': [len(opportunities_df)],
+                            'High_Priority_Count': [len(opportunities_df[opportunities_df['Contract Priority'] == 'High Priority'])],
+                            'Total_Annual_Spend': [opportunities_df['Annual Spend'].sum()],
+                            'Total_Estimated_Savings': [enhanced_export_df['Estimated_Annual_Savings'].sum()],
+                            'Average_Vendor_Performance': [opportunities_df['Vendor Performance'].mean()],
+                            'Phase_1_Opportunities': [len(enhanced_export_df[enhanced_export_df['Implementation_Phase'] == 'Phase 1 (0-3 months)'])],
+                            'Strategic_Partners': [len(enhanced_export_df[enhanced_export_df['Vendor_Category'] == 'Strategic Partner'])],
+                            'Export_Date': [pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')]
+                        }
+                        summary_df = pd.DataFrame(summary_data)
+                        summary_csv = summary_df.to_csv(index=False)
+                        
+                        # Export options
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.download_button(
+                                label="📥 Export Detailed Analysis",
+                                data=detailed_csv,
+                                file_name=f"detailed_contract_opportunities_{selected_region}_{selected_currency}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                        
+                        with col2:
+                            st.download_button(
+                                label="📊 Export Executive Summary",
+                                data=summary_csv,
+                                file_name=f"executive_summary_{selected_region}_{selected_currency}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
                         
                         # Store results for other tabs
                         st.session_state['contract_opportunities'] = opportunities_df
@@ -637,7 +786,7 @@ def display(df):
                 if selected_opportunity:
                     # Parse selection
                     vendor_name = selected_opportunity.split(' - Item ')[0]
-                    item_id = int(selected_opportunity.split(' - Item ')[1])
+                    item_id = selected_opportunity.split(' - Item ')[1]  # Keep as string
                     
                     # Get historical data
                     historical_data = df_clean[
