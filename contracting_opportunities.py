@@ -441,11 +441,8 @@ def display(df):
                             y='Vendor Performance',
                             size='Annual Spend',
                             color='Contract Priority',
-                            hover_data={
-                                'Vendor Name': True,
-                                'Item': True,
-                                'Annual Spend': ':,.0f'
-                            },
+                            hover_name='Vendor Name',
+                            hover_data=['Item', 'Annual Spend'],
                             title="Contract Opportunity Matrix: Suitability vs Vendor Performance",
                             labels={
                                 'Suitability Score': 'Contract Suitability Score',
@@ -610,7 +607,10 @@ def display(df):
                     color='Overall Score',
                     hover_name='Vendor Name',
                     title=f"Vendor Performance vs Total Spend ({display_symbol})",
-                    labels={'Overall Score': 'Performance Score', 'Total Spend': f'Total Annual Spend ({display_symbol})'},
+                    labels={
+                        'Overall Score': 'Performance Score', 
+                        'Total Spend': f'Total Annual Spend ({display_symbol})'
+                    },
                     color_continuous_scale='Viridis'
                 )
                 fig.update_layout(
