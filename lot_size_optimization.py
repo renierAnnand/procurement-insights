@@ -273,14 +273,48 @@ def display(df):
         col1, col2 = st.columns(2)
         with col1:
             unique_items = df_filtered['Item'].nunique()
-            avg_unit_price = df_filtered['Unit Price'].mean()
-            st.metric("Unique Items", unique_items)
-            st.metric("Avg Unit Price", f"{currency_symbol}{avg_unit_price:.2f}")
+            try:
+                avg_unit_price = float(df_filtered['Unit Price'].mean())
+                st.metric("Unique Items", unique_items)
+                st.metric("Avg Unit Price", f"{currency_symbol}{avg_unit_price:.2f}")
+            except:
+                st.metric("Unique Items", unique_items)
+                st.warning("Unit Price contains non-numeric data")
+                
         with col2:
-            total_qty = df_filtered['Qty Delivered'].sum()
-            avg_qty = df_filtered['Qty Delivered'].mean()
-            st.metric("Total Quantity", f"{total_qty:,.0f}")
-            st.metric("Avg Order Size", f"{avg_qty:.0f}")
+            try:
+                total_qty = float(df_filtered['Qty Delivered'].sum())
+                avg_qty = float(df_filtered['Qty Delivered'].mean())
+                st.metric("Total Quantity", f"{total_qty:,.0f}")
+                st.metric("Avg Order Size", f"{avg_qty:.0f}")
+            except:
+                st.warning("Qty Delivered contains non-numeric data")
+        
+        # Debug info
+        st.subheader("🔍 Debug Information")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Unit Price Data Types:**")
+            price_types = df_filtered['Unit Price'].apply(type).value_counts()
+            st.write(price_types)
+        with col2:
+            st.write("**Qty Delivered Data Types:**")
+            qty_types = df_filtered['Qty Delivered'].apply(type).value_counts()
+            st.write(qty_types)
+            
+        # Show sample of problematic data
+        non_numeric_prices = df_filtered[pd.to_numeric(df_filtered['Unit Price'], errors='coerce').isna()]
+        non_numeric_qty = df_filtered[pd.to_numeric(df_filtered['Qty Delivered'], errors='coerce').isna()]
+        
+        if len(non_numeric_prices) > 0:
+            st.warning(f"Found {len(non_numeric_prices)} rows with non-numeric Unit Price")
+            st.write("Sample problematic Unit Price values:")
+            st.write(non_numeric_prices[['Item', 'Unit Price']].head())
+            
+        if len(non_numeric_qty) > 0:
+            st.warning(f"Found {len(non_numeric_qty)} rows with non-numeric Qty Delivered")
+            st.write("Sample problematic Qty Delivered values:")
+            st.write(non_numeric_qty[['Item', 'Qty Delivered']].head())
     
     # Tabs
     tab1, tab2 = st.tabs(["📊 EOQ Analysis", "💰 Cost Optimization"])
@@ -316,39 +350,76 @@ def display(df):
         if selected_item:
             item_data = df_filtered[df_filtered['Item'] == selected_item]
             
-            # Calculate demand and costs
-            annual_demand = item_data['Qty Delivered'].sum()
-            avg_unit_cost = item_data['Unit Price'].mean()
+            # Calculate demand and costs with proper validation
+            try:
+                annual_demand = float(item_data['Qty Delivered'].sum())
+                avg_unit_cost = float(item_data['Unit Price'].mean())
+                
+                # Validate that we have positive numeric values
+                if annual_demand <= 0 or avg_unit_cost <= 0:
+                    st.error("Selected item has invalid data (zero or negative values)")
+                    st.info(f"Annual Demand: {annual_demand}, Average Unit Cost: {avg_unit_cost}")
+                    return
+                
+            except (ValueError, TypeError) as e:
+                st.error(f"Error processing item data: {str(e)}")
+                st.info("Please ensure Unit Price and Qty Delivered contain only numeric values")
+                return
             
             # Calculate holding cost
-            if holding_cost_type == "Percentage (%)":
-                holding_cost = avg_unit_cost * holding_cost_rate
-                holding_cost_display = f"{holding_cost_rate*100:.1f}% of unit cost"
-            else:
-                holding_cost = holding_cost_fixed
-                holding_cost_display = f"{currency_symbol}{holding_cost_fixed:.2f} per unit"
+            try:
+                if holding_cost_type == "Percentage (%)":
+                    holding_cost = float(avg_unit_cost * holding_cost_rate)
+                    holding_cost_display = f"{holding_cost_rate*100:.1f}% of unit cost"
+                else:
+                    holding_cost = float(holding_cost_fixed)
+                    holding_cost_display = f"{currency_symbol}{holding_cost_fixed:.2f} per unit"
+                
+                # Validate holding cost
+                if holding_cost <= 0:
+                    st.error("Holding cost must be positive")
+                    return
+                    
+            except (ValueError, TypeError) as e:
+                st.error(f"Error calculating holding cost: {str(e)}")
+                return
             
-            # EOQ calculation
+            # EOQ calculation with comprehensive validation
             if annual_demand > 0 and holding_cost > 0:
                 try:
+                    # Ensure all inputs are properly converted to float
+                    annual_demand = float(annual_demand)
+                    ordering_cost = float(ordering_cost)
+                    holding_cost = float(holding_cost)
+                    
+                    # Calculate EOQ
                     eoq = sqrt((2 * annual_demand * ordering_cost) / holding_cost)
+                    eoq = float(eoq)  # Ensure it's a float
                     
                     # Current average order size
-                    current_avg_order = item_data['Qty Delivered'].mean()
+                    current_avg_order = float(item_data['Qty Delivered'].mean())
+                    
+                    # Validate all calculated values
+                    if not all(isinstance(x, (int, float)) and x > 0 for x in [eoq, current_avg_order]):
+                        st.error("Invalid calculation results. Please check your data.")
+                        return
                     
                     # Cost calculation functions
                     def ordering_cost_func(order_qty):
+                        order_qty = float(order_qty)
                         if order_qty <= 0:
                             return float('inf')
-                        return (annual_demand / order_qty) * ordering_cost
+                        return float((annual_demand / order_qty) * ordering_cost)
                     
                     def holding_cost_func(order_qty):
-                        return (order_qty / 2) * holding_cost
+                        order_qty = float(order_qty)
+                        return float((order_qty / 2) * holding_cost)
                     
                     def total_cost(order_qty):
+                        order_qty = float(order_qty)
                         if order_qty <= 0:
                             return float('inf')
-                        return ordering_cost_func(order_qty) + holding_cost_func(order_qty)
+                        return float(ordering_cost_func(order_qty) + holding_cost_func(order_qty))
                     
                     eoq_cost = total_cost(eoq)
                     current_cost = total_cost(current_avg_order)
@@ -357,7 +428,12 @@ def display(df):
                 except Exception as e:
                     st.error(f"Error in EOQ calculation: {str(e)}")
                     st.info("Please check your data values and parameters.")
+                    st.info(f"Debug info - Annual Demand: {annual_demand}, Holding Cost: {holding_cost}, Ordering Cost: {ordering_cost}")
                     return
+            else:
+                st.error("Invalid input values for EOQ calculation")
+                st.info(f"Annual Demand: {annual_demand}, Holding Cost: {holding_cost}")
+                return
                 
                 # Display results
                 col1, col2, col3, col4, col5 = st.columns(5)
@@ -385,10 +461,23 @@ def display(df):
                     st.metric("Days Between Orders (EOQ)", f"{cycle_time_eoq:.0f}")
                 
                 # Enhanced EOQ curve with cost breakdown
-                order_sizes = np.arange(max(10, eoq * 0.1), eoq * 3, max(1, int(eoq * 0.1)))
-                total_costs = [total_cost(q) for q in order_sizes]
-                ordering_costs = [ordering_cost_func(q) for q in order_sizes]
-                holding_costs = [holding_cost_func(q) for q in order_sizes]
+                try:
+                    # Create order size range with proper numeric handling
+                    start_range = max(10.0, float(eoq * 0.1))
+                    end_range = float(eoq * 3)
+                    step_size = max(1.0, float(eoq * 0.1))
+                    
+                    order_sizes = np.arange(start_range, end_range, step_size)
+                    order_sizes = [float(x) for x in order_sizes]  # Ensure all are floats
+                    
+                    total_costs = [total_cost(q) for q in order_sizes]
+                    ordering_costs = [ordering_cost_func(q) for q in order_sizes]
+                    holding_costs = [holding_cost_func(q) for q in order_sizes]
+                    
+                except Exception as e:
+                    st.error(f"Error generating chart data: {str(e)}")
+                    st.info("Chart generation failed, but calculations above are still valid.")
+                    return
                 
                 fig = go.Figure()
                 
@@ -487,15 +576,24 @@ def display(df):
             item_data = df_filtered[df_filtered['Item'] == item]
             
             if len(item_data) >= 3:  # Need minimum data points for statistical reliability
-                annual_demand = item_data['Qty Delivered'].sum()
-                avg_unit_cost = item_data['Unit Price'].mean()
-                current_avg_order = item_data['Qty Delivered'].mean()
-                
-                # Calculate holding cost based on type
-                if holding_cost_type == "Percentage (%)":
-                    holding_cost = avg_unit_cost * holding_cost_rate
-                else:
-                    holding_cost = holding_cost_fixed
+                try:
+                    annual_demand = float(item_data['Qty Delivered'].sum())
+                    avg_unit_cost = float(item_data['Unit Price'].mean())
+                    current_avg_order = float(item_data['Qty Delivered'].mean())
+                    
+                    # Skip items with invalid data
+                    if annual_demand <= 0 or avg_unit_cost <= 0 or current_avg_order <= 0:
+                        continue
+                    
+                    # Calculate holding cost based on type
+                    if holding_cost_type == "Percentage (%)":
+                        holding_cost = float(avg_unit_cost * holding_cost_rate)
+                    else:
+                        holding_cost = float(holding_cost_fixed)
+                    
+                except (ValueError, TypeError, AttributeError):
+                    # Skip items with data conversion issues
+                    continue
                 
                 if annual_demand > 0 and holding_cost > 0:
                     try:
@@ -588,13 +686,20 @@ def display(df):
 if __name__ == "__main__":
     st.set_page_config(page_title="Enhanced LOT Size Optimization", layout="wide")
     
-    # Enhanced sample data with regions
+    # Enhanced sample data with regions - ensure all numeric columns are proper numbers
     regions = ['Saudi Arabia', 'UAE', 'Kuwait', 'Qatar', 'Bahrain', 'Egypt']
+    np.random.seed(42)  # For reproducible results
+    
     sample_data = {
         'Item': np.random.choice(['Product A', 'Product B', 'Product C', 'Product D', 'Product E'], 150),
-        'Unit Price': np.random.uniform(5, 50, 150),
-        'Qty Delivered': np.random.randint(10, 200, 150),
+        'Unit Price': np.round(np.random.uniform(5.0, 50.0, 150), 2),  # Ensure float values
+        'Qty Delivered': np.random.randint(10, 200, 150).astype(float),  # Convert to float
         'Region': np.random.choice(regions, 150)
     }
     df = pd.DataFrame(sample_data)
+    
+    # Ensure data types are correct
+    df['Unit Price'] = df['Unit Price'].astype(float)
+    df['Qty Delivered'] = df['Qty Delivered'].astype(float)
+    
     display(df)
