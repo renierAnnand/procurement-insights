@@ -613,8 +613,10 @@ def display(df):
                     labels={'Overall Score': 'Performance Score', 'Total Spend': f'Total Annual Spend ({display_symbol})'},
                     color_continuous_scale='Viridis'
                 )
-                fig.update_layout(height=500)
-                fig.update_yaxis(title=f"Total Annual Spend ({display_symbol})")
+                fig.update_layout(
+                    height=500,
+                    yaxis_title=f"Total Annual Spend ({display_symbol})"
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
             else:
