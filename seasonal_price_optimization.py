@@ -30,76 +30,137 @@ def detect_seasonal_pattern(data, min_data_points=12):
     Detect strong seasonal patterns using coefficient of variation and statistical tests
     Returns pattern strength score (0-100) and confidence level
     """
-    if len(data) < min_data_points:
-        return 0, "Insufficient Data"
-    
-    # Calculate coefficient of variation
-    cv = data.std() / data.mean() * 100 if data.mean() > 0 else 0
-    
-    # Statistical tests for seasonality
     try:
-        # Kruskal-Wallis test for monthly differences
-        monthly_groups = [group['Unit Price'].values for name, group in data.groupby('Month') if len(group) >= 2]
-        if len(monthly_groups) >= 3:
-            h_stat, p_value = stats.kruskal(*monthly_groups)
-            statistical_significance = 1 - p_value if p_value < 0.05 else 0
-        else:
-            statistical_significance = 0
-    except:
+        if len(data) < min_data_points:
+            return 0, "Insufficient Data"
+        
+        # Ensure Unit Price is numeric
+        data = data.copy()
+        data['Unit Price'] = pd.to_numeric(data['Unit Price'], errors='coerce')
+        data = data.dropna(subset=['Unit Price'])
+        
+        if len(data) == 0:
+            return 0, "No Valid Data"
+        
+        # Calculate coefficient of variation
+        price_mean = data['Unit Price'].mean()
+        price_std = data['Unit Price'].std()
+        cv = (price_std / price_mean * 100) if price_mean > 0 else 0
+        
+        # Statistical tests for seasonality
         statistical_significance = 0
-    
-    # Pattern strength calculation
-    cv_score = min(cv / 20 * 50, 50)  # CV contributes up to 50 points
-    stat_score = statistical_significance * 50  # Statistical significance contributes up to 50 points
-    
-    pattern_strength = cv_score + stat_score
-    
-    # Confidence level
-    if pattern_strength >= 70:
-        confidence = "High"
-    elif pattern_strength >= 40:
-        confidence = "Medium"
-    elif pattern_strength >= 20:
-        confidence = "Low"
-    else:
-        confidence = "None"
-    
-    return pattern_strength, confidence
+        try:
+            # Ensure Month is numeric
+            data['Month'] = pd.to_numeric(data['Month'], errors='coerce')
+            data = data.dropna(subset=['Month'])
+            
+            # Kruskal-Wallis test for monthly differences
+            monthly_groups = []
+            for month_num, group in data.groupby('Month'):
+                if len(group) >= 2:
+                    monthly_groups.append(group['Unit Price'].values)
+            
+            if len(monthly_groups) >= 3:
+                h_stat, p_value = stats.kruskal(*monthly_groups)
+                statistical_significance = 1 - p_value if p_value < 0.05 else 0
+        except Exception as e:
+            statistical_significance = 0
+        
+        # Pattern strength calculation
+        cv_score = min(cv / 20 * 50, 50)  # CV contributes up to 50 points
+        stat_score = statistical_significance * 50  # Statistical significance contributes up to 50 points
+        
+        pattern_strength = cv_score + stat_score
+        
+        # Confidence level
+        if pattern_strength >= 70:
+            confidence = "High"
+        elif pattern_strength >= 40:
+            confidence = "Medium"
+        elif pattern_strength >= 20:
+            confidence = "Low"
+        else:
+            confidence = "None"
+        
+        return float(pattern_strength), str(confidence)
+        
+    except Exception as e:
+        st.error(f"Error in pattern detection: {str(e)}")
+        return 0, "Error"
 
 def calculate_optimal_timing(data, region):
     """Calculate optimal buying months and potential savings"""
-    monthly_stats = data.groupby(['Month', 'Month_Name'])['Unit Price'].agg([
-        'mean', 'std', 'count', 'median'
-    ]).reset_index()
-    
-    # Calculate seasonal indices
-    overall_mean = data['Unit Price'].mean()
-    monthly_stats['Seasonal_Index'] = (monthly_stats['mean'] / overall_mean) * 100
-    monthly_stats['Price_Advantage'] = 100 - monthly_stats['Seasonal_Index']
-    
-    # Find optimal months (lowest prices)
-    optimal_months = monthly_stats.nsmallest(3, 'Seasonal_Index')
-    worst_months = monthly_stats.nlargest(3, 'Seasonal_Index')
-    
-    # Calculate potential savings
-    best_price = monthly_stats['mean'].min()
-    worst_price = monthly_stats['mean'].max()
-    avg_price = monthly_stats['mean'].mean()
-    
-    # Different savings scenarios
-    max_savings_pct = ((worst_price - best_price) / worst_price) * 100 if worst_price > 0 else 0
-    realistic_savings_pct = ((avg_price - best_price) / avg_price) * 100 if avg_price > 0 else 0
-    
-    return {
-        'monthly_stats': monthly_stats,
-        'optimal_months': optimal_months,
-        'worst_months': worst_months,
-        'max_savings_pct': max_savings_pct,
-        'realistic_savings_pct': realistic_savings_pct,
-        'best_price': best_price,
-        'worst_price': worst_price,
-        'avg_price': avg_price
-    }
+    try:
+        # Ensure data types are correct
+        data = data.copy()
+        data['Unit Price'] = pd.to_numeric(data['Unit Price'], errors='coerce')
+        data['Month'] = pd.to_numeric(data['Month'], errors='coerce')
+        data = data.dropna(subset=['Unit Price', 'Month', 'Month_Name'])
+        
+        if len(data) == 0:
+            return {
+                'monthly_stats': pd.DataFrame(),
+                'optimal_months': pd.DataFrame(),
+                'worst_months': pd.DataFrame(),
+                'max_savings_pct': 0,
+                'realistic_savings_pct': 0,
+                'best_price': 0,
+                'worst_price': 0,
+                'avg_price': 0
+            }
+        
+        monthly_stats = data.groupby(['Month', 'Month_Name'])['Unit Price'].agg([
+            'mean', 'std', 'count', 'median'
+        ]).reset_index()
+        
+        # Handle NaN values in std
+        monthly_stats['std'] = monthly_stats['std'].fillna(0)
+        
+        # Calculate seasonal indices
+        overall_mean = data['Unit Price'].mean()
+        if overall_mean > 0:
+            monthly_stats['Seasonal_Index'] = (monthly_stats['mean'] / overall_mean) * 100
+            monthly_stats['Price_Advantage'] = 100 - monthly_stats['Seasonal_Index']
+        else:
+            monthly_stats['Seasonal_Index'] = 100
+            monthly_stats['Price_Advantage'] = 0
+        
+        # Find optimal months (lowest prices)
+        optimal_months = monthly_stats.nsmallest(min(3, len(monthly_stats)), 'Seasonal_Index')
+        worst_months = monthly_stats.nlargest(min(3, len(monthly_stats)), 'Seasonal_Index')
+        
+        # Calculate potential savings
+        best_price = monthly_stats['mean'].min() if len(monthly_stats) > 0 else 0
+        worst_price = monthly_stats['mean'].max() if len(monthly_stats) > 0 else 0
+        avg_price = monthly_stats['mean'].mean() if len(monthly_stats) > 0 else 0
+        
+        # Different savings scenarios
+        max_savings_pct = ((worst_price - best_price) / worst_price * 100) if worst_price > 0 else 0
+        realistic_savings_pct = ((avg_price - best_price) / avg_price * 100) if avg_price > 0 else 0
+        
+        return {
+            'monthly_stats': monthly_stats,
+            'optimal_months': optimal_months,
+            'worst_months': worst_months,
+            'max_savings_pct': float(max_savings_pct),
+            'realistic_savings_pct': float(realistic_savings_pct),
+            'best_price': float(best_price),
+            'worst_price': float(worst_price),
+            'avg_price': float(avg_price)
+        }
+        
+    except Exception as e:
+        st.error(f"Error in timing calculation: {str(e)}")
+        return {
+            'monthly_stats': pd.DataFrame(),
+            'optimal_months': pd.DataFrame(),
+            'worst_months': pd.DataFrame(),
+            'max_savings_pct': 0,
+            'realistic_savings_pct': 0,
+            'best_price': 0,
+            'worst_price': 0,
+            'avg_price': 0
+        }
 
 def display(df):
     """Enhanced Seasonal Price Optimization Module"""
@@ -138,19 +199,32 @@ def display(df):
     
     # Data cleaning and preparation
     df_clean = df_filtered.copy()
-    df_clean['Creation Date'] = pd.to_datetime(df_clean['Creation Date'], errors='coerce')
-    df_clean = df_clean.dropna(subset=['Creation Date', 'Unit Price', 'Item'])
-    df_clean = df_clean[df_clean['Unit Price'] > 0]
     
-    if len(df_clean) == 0:
-        st.warning("No valid data found for analysis in selected region.")
+    try:
+        # Convert dates and clean data
+        df_clean['Creation Date'] = pd.to_datetime(df_clean['Creation Date'], errors='coerce')
+        df_clean['Unit Price'] = pd.to_numeric(df_clean['Unit Price'], errors='coerce')
+        
+        # Remove invalid data
+        df_clean = df_clean.dropna(subset=['Creation Date', 'Unit Price', 'Item'])
+        df_clean = df_clean[df_clean['Unit Price'] > 0]
+        
+        if len(df_clean) == 0:
+            st.warning("No valid data found for analysis in selected region.")
+            return
+        
+        # Add date components with proper data types
+        df_clean['Year'] = df_clean['Creation Date'].dt.year.astype(int)
+        df_clean['Month'] = df_clean['Creation Date'].dt.month.astype(int)
+        df_clean['Quarter'] = df_clean['Creation Date'].dt.quarter.astype(int)
+        df_clean['Month_Name'] = df_clean['Creation Date'].dt.month_name().astype(str)
+        
+        # Ensure Item column is string
+        df_clean['Item'] = df_clean['Item'].astype(str)
+        
+    except Exception as e:
+        st.error(f"Error processing data: {str(e)}")
         return
-    
-    # Add date components
-    df_clean['Year'] = df_clean['Creation Date'].dt.year
-    df_clean['Month'] = df_clean['Creation Date'].dt.month
-    df_clean['Quarter'] = df_clean['Creation Date'].dt.quarter
-    df_clean['Month_Name'] = df_clean['Creation Date'].dt.month_name()
     
     # Display regional summary
     if has_region and selected_region != 'All Regions':
@@ -193,19 +267,35 @@ def display(df):
         pattern_results = []
         
         for item in df_clean['Item'].unique():
-            item_data = df_clean[df_clean['Item'] == item]
-            if len(item_data) >= min_data_points:
-                pattern_strength, confidence = detect_seasonal_pattern(item_data)
-                
-                pattern_results.append({
-                    'Item': item,
-                    'Data_Points': len(item_data),
-                    'Pattern_Strength': pattern_strength,
-                    'Confidence': confidence,
-                    'CV_Percent': item_data['Unit Price'].std() / item_data['Unit Price'].mean() * 100,
-                    'Price_Range': item_data['Unit Price'].max() - item_data['Unit Price'].min(),
-                    'Avg_Price': item_data['Unit Price'].mean()
-                })
+            try:
+                item_data = df_clean[df_clean['Item'] == item].copy()
+                if len(item_data) >= min_data_points:
+                    pattern_strength, confidence = detect_seasonal_pattern(item_data)
+                    
+                    # Calculate metrics safely
+                    unit_prices = pd.to_numeric(item_data['Unit Price'], errors='coerce').dropna()
+                    if len(unit_prices) > 0:
+                        avg_price = float(unit_prices.mean())
+                        price_std = float(unit_prices.std())
+                        cv_percent = float((price_std / avg_price * 100)) if avg_price > 0 else 0.0
+                        price_range = float(unit_prices.max() - unit_prices.min())
+                    else:
+                        avg_price = 0.0
+                        cv_percent = 0.0
+                        price_range = 0.0
+                    
+                    pattern_results.append({
+                        'Item': str(item),
+                        'Data_Points': int(len(item_data)),
+                        'Pattern_Strength': float(pattern_strength),
+                        'Confidence': str(confidence),
+                        'CV_Percent': cv_percent,
+                        'Price_Range': price_range,
+                        'Avg_Price': avg_price
+                    })
+            except Exception as e:
+                st.warning(f"Error analyzing item {item}: {str(e)}")
+                continue
         
         if pattern_results:
             pattern_df = pd.DataFrame(pattern_results)
@@ -385,22 +475,39 @@ def display(df):
         timing_recommendations = []
         
         for item in strong_pattern_items:
-            item_data = df_clean[df_clean['Item'] == item]
-            if len(item_data) >= min_data_points:
-                timing_analysis = calculate_optimal_timing(item_data, currency_region)
-                
-                optimal_months = timing_analysis['optimal_months']
-                
-                timing_recommendations.append({
-                    'Item': item,
-                    'Best_Month_1': optimal_months.iloc[0]['Month_Name'],
-                    'Best_Month_2': optimal_months.iloc[1]['Month_Name'] if len(optimal_months) > 1 else 'N/A',
-                    'Best_Month_3': optimal_months.iloc[2]['Month_Name'] if len(optimal_months) > 2 else 'N/A',
-                    'Avg_Price': item_data['Unit Price'].mean(),
-                    'Best_Price': timing_analysis['best_price'],
-                    'Savings_Potential': timing_analysis['realistic_savings_pct'],
-                    'Pattern_Strength': pattern_df[pattern_df['Item'] == item]['Pattern_Strength'].iloc[0] if 'pattern_df' in locals() else 0
-                })
+            try:
+                item_data = df_clean[df_clean['Item'] == item].copy()
+                if len(item_data) >= min_data_points:
+                    timing_analysis = calculate_optimal_timing(item_data, currency_region)
+                    
+                    optimal_months = timing_analysis['optimal_months']
+                    
+                    if len(optimal_months) > 0:
+                        # Safely get month names
+                        best_month_1 = str(optimal_months.iloc[0]['Month_Name']) if len(optimal_months) > 0 else 'N/A'
+                        best_month_2 = str(optimal_months.iloc[1]['Month_Name']) if len(optimal_months) > 1 else 'N/A'
+                        best_month_3 = str(optimal_months.iloc[2]['Month_Name']) if len(optimal_months) > 2 else 'N/A'
+                        
+                        # Get pattern strength safely
+                        pattern_strength = 0.0
+                        if 'pattern_df' in locals() and len(pattern_df) > 0:
+                            pattern_match = pattern_df[pattern_df['Item'] == item]
+                            if len(pattern_match) > 0:
+                                pattern_strength = float(pattern_match['Pattern_Strength'].iloc[0])
+                        
+                        timing_recommendations.append({
+                            'Item': str(item),
+                            'Best_Month_1': best_month_1,
+                            'Best_Month_2': best_month_2,
+                            'Best_Month_3': best_month_3,
+                            'Avg_Price': float(item_data['Unit Price'].mean()),
+                            'Best_Price': float(timing_analysis['best_price']),
+                            'Savings_Potential': float(timing_analysis['realistic_savings_pct']),
+                            'Pattern_Strength': pattern_strength
+                        })
+            except Exception as e:
+                st.warning(f"Error processing timing for item {item}: {str(e)}")
+                continue
         
         if timing_recommendations:
             timing_df = pd.DataFrame(timing_recommendations)
@@ -500,35 +607,51 @@ def display(df):
             savings_analysis = []
             
             for _, item_row in timing_df.iterrows():
-                item = item_row['Item']
-                item_data = df_clean[df_clean['Item'] == item]
-                
-                # Calculate annual spending
-                if 'Line Total' in item_data.columns:
-                    annual_spend = item_data['Line Total'].sum()
-                elif 'Qty Delivered' in item_data.columns:
-                    annual_spend = (item_data['Unit Price'] * item_data['Qty Delivered']).sum()
-                else:
-                    # Estimate based on average order frequency
-                    avg_price = item_data['Unit Price'].mean()
-                    orders_per_year = len(item_data)
-                    annual_spend = avg_price * orders_per_year
-                
-                # Calculate different savings scenarios
-                realistic_savings = annual_spend * (item_row['Savings_Potential'] / 100)
-                conservative_savings = realistic_savings * 0.7  # 70% achievement rate
-                optimistic_savings = realistic_savings * 1.3   # 130% achievement rate
-                
-                savings_analysis.append({
-                    'Item': item,
-                    'Annual_Spend': annual_spend,
-                    'Realistic_Savings': realistic_savings,
-                    'Conservative_Savings': conservative_savings,
-                    'Optimistic_Savings': optimistic_savings,
-                    'Savings_Potential_%': item_row['Savings_Potential'],
-                    'Best_Months': f"{item_row['Best_Month_1']}, {item_row['Best_Month_2']}",
-                    'Pattern_Strength': item_row.get('Pattern_Strength', 0)
-                })
+                try:
+                    item = str(item_row['Item'])
+                    item_data = df_clean[df_clean['Item'] == item].copy()
+                    
+                    # Calculate annual spending safely
+                    annual_spend = 0.0
+                    if 'Line Total' in item_data.columns:
+                        line_totals = pd.to_numeric(item_data['Line Total'], errors='coerce').fillna(0)
+                        annual_spend = float(line_totals.sum())
+                    elif 'Qty Delivered' in item_data.columns:
+                        unit_prices = pd.to_numeric(item_data['Unit Price'], errors='coerce').fillna(0)
+                        quantities = pd.to_numeric(item_data['Qty Delivered'], errors='coerce').fillna(1)
+                        annual_spend = float((unit_prices * quantities).sum())
+                    else:
+                        # Estimate based on average order frequency
+                        unit_prices = pd.to_numeric(item_data['Unit Price'], errors='coerce').fillna(0)
+                        avg_price = float(unit_prices.mean()) if len(unit_prices) > 0 else 0.0
+                        orders_per_year = int(len(item_data))
+                        annual_spend = avg_price * orders_per_year
+                    
+                    # Calculate different savings scenarios
+                    savings_potential = float(item_row['Savings_Potential'])
+                    realistic_savings = annual_spend * (savings_potential / 100.0)
+                    conservative_savings = realistic_savings * 0.7  # 70% achievement rate
+                    optimistic_savings = realistic_savings * 1.3   # 130% achievement rate
+                    
+                    # Get best months safely
+                    best_month_1 = str(item_row['Best_Month_1'])
+                    best_month_2 = str(item_row['Best_Month_2'])
+                    best_months_str = f"{best_month_1}, {best_month_2}" if best_month_2 != 'N/A' else best_month_1
+                    
+                    savings_analysis.append({
+                        'Item': item,
+                        'Annual_Spend': float(annual_spend),
+                        'Realistic_Savings': float(realistic_savings),
+                        'Conservative_Savings': float(conservative_savings),
+                        'Optimistic_Savings': float(optimistic_savings),
+                        'Savings_Potential_%': savings_potential,
+                        'Best_Months': best_months_str,
+                        'Pattern_Strength': float(item_row.get('Pattern_Strength', 0.0))
+                    })
+                    
+                except Exception as e:
+                    st.warning(f"Error calculating savings for item {item_row.get('Item', 'Unknown')}: {str(e)}")
+                    continue
             
             savings_df = pd.DataFrame(savings_analysis)
             savings_df = savings_df.sort_values('Realistic_Savings', ascending=False)
