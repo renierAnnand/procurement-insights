@@ -630,14 +630,46 @@ def display(df):
             display_currency = st.session_state.get('selected_currency', selected_currency)
             display_symbol = st.session_state.get('currency_symbol', currency_symbol)
             
-            # Vendor selection
+            # Vendor selection with select/deselect all functionality
             vendor_options = sorted(df_clean["Vendor Name"].dropna().unique())
+            
+            # Selection control buttons
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
+            
+            with col1:
+                if st.button("✅ Select All", key="select_all_vendors"):
+                    st.session_state.performance_vendors = vendor_options
+            
+            with col2:
+                if st.button("❌ Clear All", key="deselect_all_vendors"):
+                    st.session_state.performance_vendors = []
+            
+            with col3:
+                if st.button("🔝 Top 10", key="select_top_vendors"):
+                    # Select top 10 vendors by spend
+                    top_vendors = df_clean.groupby('Vendor Name').apply(
+                        lambda x: (x['Unit Price'] * x['Qty Delivered']).sum()
+                    ).sort_values(ascending=False).head(10).index.tolist()
+                    st.session_state.performance_vendors = top_vendors
+            
+            # Vendor multiselect with enhanced info
             selected_vendors = st.multiselect(
-                "Select Vendors for Performance Analysis",
+                f"Select Vendors for Performance Analysis ({len(vendor_options)} available)",
                 options=vendor_options,
-                default=vendor_options[:5] if len(vendor_options) >= 5 else vendor_options,
-                key="performance_vendors"
+                default=st.session_state.get('performance_vendors', vendor_options[:5] if len(vendor_options) >= 5 else vendor_options),
+                key="performance_vendors",
+                help="💡 **Tips:** Use '✅ Select All' for complete analysis, '🔝 Top 10' for highest-spend vendors, or '❌ Clear All' to reset selection."
             )
+            
+            # Show selection summary
+            if selected_vendors:
+                total_vendors = len(vendor_options)
+                selected_count = len(selected_vendors)
+                percentage = (selected_count / total_vendors) * 100
+                
+                st.info(f"📊 **Selection Summary:** {selected_count} of {total_vendors} vendors selected ({percentage:.1f}%)")
+            else:
+                st.warning("⚠️ Please select at least one vendor for analysis.")
             
             if selected_vendors:
                 vendor_performance_results = []
