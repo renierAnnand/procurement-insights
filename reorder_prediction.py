@@ -242,6 +242,39 @@ def display_bulk_results(results_df, currency):
 def display(df):
     st.header("Smart Reorder Point Prediction")
     
+    # Data Overview Section
+    if st.checkbox("🔍 Show Data Overview", help="View summary of available data"):
+        st.subheader("📋 Dataset Overview")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Records", len(df))
+        with col2:
+            st.metric("Unique Items", df["Item"].nunique() if "Item" in df.columns else "N/A")
+        with col3:
+            if "Creation Date" in df.columns:
+                try:
+                    date_range = pd.to_datetime(df["Creation Date"]).dt.date
+                    st.metric("Date Range", f"{date_range.min()} to {date_range.max()}")
+                except:
+                    st.metric("Date Range", "Invalid dates")
+            else:
+                st.metric("Date Range", "No date column")
+        
+        # Show column info
+        with st.expander("📊 Available Columns"):
+            st.write("**Columns in dataset:**")
+            for i, col in enumerate(df.columns):
+                col_info = f"{i+1}. **{col}** - {df[col].dtype}"
+                if col in ["Item", "Region", "Vendor"]:
+                    unique_count = df[col].nunique()
+                    col_info += f" ({unique_count} unique values)"
+                st.write(col_info)
+        
+        # Show sample data
+        with st.expander("👀 Sample Data"):
+            st.dataframe(df.head(10))
+    
     # Region and Currency Selection
     st.subheader("📍 Region & Currency Settings")
     col1, col2 = st.columns(2)
@@ -487,8 +520,49 @@ def display(df):
         # Filter the dataset for selected item
         item_df = region_df[region_df["Item"] == selected_item].copy()
         
+        # Debug information
+        st.write(f"**🔍 Data Filtering Debug Info:**")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.write(f"Total rows in region: {len(region_df)}")
+        with col2:
+            st.write(f"Rows for selected item: {len(item_df)}")
+        with col3:
+            if not item_df.empty:
+                st.write(f"Date range: {len(item_df)} records")
+            else:
+                st.write("No records found")
+        with col4:
+            if not item_df.empty and "Qty Delivered" in item_df.columns:
+                valid_qty = item_df["Qty Delivered"].notna().sum()
+                st.write(f"Valid qty records: {valid_qty}")
+        
         if item_df.empty:
-            st.warning(f"No data available for item: {selected_item}")
+            st.error(f"❌ No data available for item: **{selected_item}**")
+            
+            # Show available items for debugging
+            with st.expander("🔍 Debug: Available Items in Current Filter"):
+                available_debug = region_df["Item"].value_counts().head(10)
+                st.write("Top 10 items in current region/vendor filter:")
+                st.dataframe(available_debug)
+            
+            return
+        
+        # Check for required columns
+        required_columns = ["Creation Date", "Qty Delivered"]
+        missing_columns = [col for col in required_columns if col not in item_df.columns]
+        
+        if missing_columns:
+            st.error(f"❌ Missing required columns: {missing_columns}")
+            st.write("Available columns:", list(item_df.columns))
+            return
+        
+        # Check for valid data
+        item_df = item_df.dropna(subset=["Creation Date", "Qty Delivered"])
+        
+        if item_df.empty:
+            st.error(f"❌ No valid data found for item: **{selected_item}**")
+            st.write("All records have missing Creation Date or Qty Delivered values.")
             return
         
         # Reorder Point Parameters
@@ -518,14 +592,68 @@ def display(df):
         st.subheader("📊 Key Performance Indicators")
         
         try:
-            # Convert Creation Date to datetime
-            item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"])
+            # Convert Creation Date to datetime with better error handling
+            st.write("**📅 Processing Date Information...**")
+            
+            # Show sample of raw data
+            with st.expander("🔍 Sample Raw Data"):
+                st.write(f"Sample of {len(item_df)} records:")
+                st.dataframe(item_df.head(10))
+            
+            # Try to convert dates
+            try:
+                item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"], errors='coerce')
+                invalid_dates = item_df["Creation Date"].isna().sum()
+                if invalid_dates > 0:
+                    st.warning(f"⚠️ Found {invalid_dates} invalid dates that will be excluded")
+                    item_df = item_df.dropna(subset=["Creation Date"])
+            except Exception as e:
+                st.error(f"❌ Error converting dates: {str(e)}")
+                return
+            
+            if item_df.empty:
+                st.error("❌ No valid dates remaining after date conversion")
+                return
+            
+            # Check quantity data
+            try:
+                item_df["Qty Delivered"] = pd.to_numeric(item_df["Qty Delivered"], errors='coerce')
+                invalid_qty = item_df["Qty Delivered"].isna().sum()
+                if invalid_qty > 0:
+                    st.warning(f"⚠️ Found {invalid_qty} invalid quantities that will be excluded")
+                    item_df = item_df.dropna(subset=["Qty Delivered"])
+            except Exception as e:
+                st.error(f"❌ Error converting quantities: {str(e)}")
+                return
+            
+            if item_df.empty:
+                st.error("❌ No valid quantities remaining after data cleaning")
+                return
             
             # Calculate daily demand
+            st.write("**📊 Calculating Daily Demand...**")
             daily_demand = item_df.groupby(item_df["Creation Date"].dt.date)["Qty Delivered"].sum()
+            
+            if daily_demand.empty:
+                st.error("❌ No daily demand data could be calculated")
+                return
+            
+            # Show daily demand summary
+            st.write(f"✅ Successfully calculated daily demand for {len(daily_demand)} days")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Days", len(daily_demand))
+            with col2:
+                st.metric("Total Quantity", f"{daily_demand.sum():.2f}")
+            with col3:
+                st.metric("Date Range", f"{daily_demand.index.min()} to {daily_demand.index.max()}")
             
             # Calculate average daily demand
             avg_daily_demand = daily_demand.mean()
+            
+            if avg_daily_demand <= 0:
+                st.error("❌ Average daily demand is zero or negative - cannot calculate reorder point")
+                return
             
             # Calculate demand standard deviation for safety stock calculation
             demand_std = daily_demand.std()
@@ -537,10 +665,19 @@ def display(df):
             reorder_point = lead_time_demand + safety_stock
             
             # Alternative safety stock using statistical method
-            statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65  # 95% service level
-            statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            if demand_std > 0:
+                statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65  # 95% service level
+                statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            else:
+                statistical_safety_stock = safety_stock
+                statistical_reorder_point = reorder_point
+                st.info("ℹ️ Demand has no variation - using simple safety stock calculation")
+            
+            st.success("✅ Analysis completed successfully!")
             
             # Display Key Metrics (matching the screenshot style)
+            st.subheader("📊 Key Performance Indicators")
+            
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
