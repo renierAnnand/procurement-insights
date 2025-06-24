@@ -8,46 +8,91 @@ def perform_bulk_analysis(df, items, lead_time_days, safety_stock_days, analysis
     """Perform bulk analysis on multiple items"""
     results = []
     
+    if not items:
+        st.error("No items provided for analysis")
+        return None
+    
     # Calculate date filter based on analysis period
     end_date = datetime.now()
-    if analysis_period == "Last 30 days":
-        start_date = end_date - timedelta(days=30)
-    elif analysis_period == "Last 60 days":
-        start_date = end_date - timedelta(days=60)
-    elif analysis_period == "Last 90 days":
-        start_date = end_date - timedelta(days=90)
-    elif analysis_period == "Last 180 days":
-        start_date = end_date - timedelta(days=180)
-    else:
-        start_date = None
+    start_date = None
     
-    for item in items:
+    try:
+        if analysis_period == "Last 30 days":
+            start_date = end_date - timedelta(days=30)
+        elif analysis_period == "Last 60 days":
+            start_date = end_date - timedelta(days=60)
+        elif analysis_period == "Last 90 days":
+            start_date = end_date - timedelta(days=90)
+        elif analysis_period == "Last 180 days":
+            start_date = end_date - timedelta(days=180)
+        # For "All available data", start_date remains None
+    except Exception as e:
+        st.error(f"Error setting date filter: {str(e)}")
+        return None
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, item in enumerate(items):
         try:
+            status_text.text(f"Analyzing item {idx + 1} of {len(items)}: {item}")
+            progress_bar.progress((idx + 1) / len(items))
+            
             # Filter data for current item
             item_df = df[df["Item"] == item].copy()
             
             if item_df.empty:
+                st.warning(f"No data found for item: {item}")
+                continue
+            
+            # Check for required columns
+            if "Creation Date" not in item_df.columns or "Qty Delivered" not in item_df.columns:
+                st.warning(f"Missing required columns for item: {item}")
                 continue
             
             # Convert Creation Date to datetime
-            item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"])
+            try:
+                item_df["Creation Date"] = pd.to_datetime(item_df["Creation Date"], errors='coerce')
+                item_df = item_df.dropna(subset=["Creation Date"])
+            except Exception as e:
+                st.warning(f"Date conversion error for item {item}: {str(e)}")
+                continue
+            
+            if item_df.empty:
+                st.warning(f"No valid dates for item: {item}")
+                continue
             
             # Apply date filter if specified
             if start_date:
                 item_df = item_df[item_df["Creation Date"] >= start_date]
             
             if item_df.empty:
+                st.warning(f"No data in selected period for item: {item}")
+                continue
+            
+            # Convert and validate quantities
+            try:
+                item_df["Qty Delivered"] = pd.to_numeric(item_df["Qty Delivered"], errors='coerce')
+                item_df = item_df.dropna(subset=["Qty Delivered"])
+                item_df = item_df[item_df["Qty Delivered"] > 0]  # Remove zero/negative quantities
+            except Exception as e:
+                st.warning(f"Quantity conversion error for item {item}: {str(e)}")
+                continue
+            
+            if item_df.empty:
+                st.warning(f"No valid quantities for item: {item}")
                 continue
             
             # Calculate daily demand
             daily_demand = item_df.groupby(item_df["Creation Date"].dt.date)["Qty Delivered"].sum()
             
-            if daily_demand.empty:
+            if daily_demand.empty or daily_demand.sum() <= 0:
+                st.warning(f"No valid demand data for item: {item}")
                 continue
             
             # Calculate metrics
             avg_daily_demand = daily_demand.mean()
-            demand_std = daily_demand.std()
+            demand_std = daily_demand.std() if len(daily_demand) > 1 else 0
             min_demand = daily_demand.min()
             max_demand = daily_demand.max()
             total_demand = daily_demand.sum()
@@ -59,8 +104,12 @@ def perform_bulk_analysis(df, items, lead_time_days, safety_stock_days, analysis
             reorder_point = lead_time_demand + safety_stock
             
             # Statistical reorder point (95% service level)
-            statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65
-            statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            if demand_std > 0 and len(daily_demand) > 1:
+                statistical_safety_stock = demand_std * np.sqrt(lead_time_days) * 1.65
+                statistical_reorder_point = lead_time_demand + statistical_safety_stock
+            else:
+                statistical_safety_stock = safety_stock
+                statistical_reorder_point = reorder_point
             
             # Calculate different scenarios
             optimistic_rp = avg_daily_demand * lead_time_days * 0.8  # 20% less
@@ -93,12 +142,18 @@ def perform_bulk_analysis(df, items, lead_time_days, safety_stock_days, analysis
             })
             
         except Exception as e:
-            st.warning(f"Error analyzing item {item}: {str(e)}")
+            st.error(f"Unexpected error analyzing item {item}: {str(e)}")
             continue
     
+    # Clear progress indicators
+    progress_bar.empty()
+    status_text.empty()
+    
     if results:
+        st.success(f"✅ Successfully analyzed {len(results)} out of {len(items)} items")
         return pd.DataFrame(results)
     else:
+        st.error("❌ No items could be analyzed. Please check your data format and filters.")
         return None
 
 def display_bulk_results(results_df, currency):
@@ -276,78 +331,66 @@ def display(df):
             st.dataframe(df.head(10))
     
     # Region and Currency Selection
-    st.subheader("📍 Region & Currency Settings")
+    st.subheader("🌍 Region & Currency Selection")
+    
     col1, col2 = st.columns(2)
     
     with col1:
         # Get unique regions from the dataframe
-        regions = df["Region"].dropna().unique() if "Region" in df.columns else ["AGC", "UAE", "KSA"]
-        selected_region = st.selectbox("Select Region", regions)
+        regions = sorted(df["Region"].dropna().unique()) if "Region" in df.columns else ["AGC", "UAE", "KSA", "USA", "Europe"]
+        selected_region = st.selectbox("Select Business Region", regions)
     
     with col2:
-        # Comprehensive global currency mapping
+        # Get all available currencies
+        currency_options = [
+            "AED", "SAR", "USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CNY", 
+            "INR", "SGD", "HKD", "CHF", "NOK", "SEK", "DKK", "PLN", "CZK",
+            "BRL", "MXN", "ZAR", "NGN", "KES", "EGP", "QAR", "KWD", "BHD", "OMR"
+        ]
+        
+        # Auto-detect currency based on region
         currency_map = {
             # Middle East & Africa
             "AGC": "AED", "UAE": "AED", "Dubai": "AED", "Abu Dhabi": "AED",
             "KSA": "SAR", "Saudi Arabia": "SAR", "Riyadh": "SAR", "Jeddah": "SAR",
             "Qatar": "QAR", "Kuwait": "KWD", "Bahrain": "BHD", "Oman": "OMR",
-            "Egypt": "EGP", "South Africa": "ZAR", "Morocco": "MAD", "Nigeria": "NGN",
-            "Kenya": "KES", "Ghana": "GHS", "Tunisia": "TND", "Jordan": "JOD",
-            "Lebanon": "LBP", "Iraq": "IQD", "Iran": "IRR", "Israel": "ILS",
+            "Egypt": "EGP", "South Africa": "ZAR", "Nigeria": "NGN", "Kenya": "KES",
             
-            # North America
-            "USA": "USD", "US": "USD", "United States": "USD", "America": "USD",
-            "Canada": "CAD", "Mexico": "MXN",
+            # Americas
+            "USA": "USD", "US": "USD", "Canada": "CAD", "Mexico": "MXN", "Brazil": "BRL",
             
             # Europe
-            "Germany": "EUR", "France": "EUR", "Italy": "EUR", "Spain": "EUR",
-            "Netherlands": "EUR", "Belgium": "EUR", "Austria": "EUR", "Portugal": "EUR",
-            "Ireland": "EUR", "Finland": "EUR", "Greece": "EUR", "Luxembourg": "EUR",
-            "UK": "GBP", "United Kingdom": "GBP", "Britain": "GBP", "England": "GBP",
+            "Europe": "EUR", "Germany": "EUR", "France": "EUR", "UK": "GBP", 
             "Switzerland": "CHF", "Norway": "NOK", "Sweden": "SEK", "Denmark": "DKK",
-            "Poland": "PLN", "Czech Republic": "CZK", "Hungary": "HUF", "Romania": "RON",
-            "Russia": "RUB", "Ukraine": "UAH", "Turkey": "TRY",
             
             # Asia Pacific
-            "China": "CNY", "Japan": "JPY", "South Korea": "KRW", "India": "INR",
-            "Singapore": "SGD", "Hong Kong": "HKD", "Taiwan": "TWD", "Thailand": "THB",
-            "Malaysia": "MYR", "Indonesia": "IDR", "Philippines": "PHP", "Vietnam": "VND",
-            "Australia": "AUD", "New Zealand": "NZD", "Pakistan": "PKR", "Bangladesh": "BDT",
-            "Sri Lanka": "LKR", "Myanmar": "MMK", "Cambodia": "KHR", "Laos": "LAK",
-            
-            # Latin America
-            "Brazil": "BRL", "Argentina": "ARS", "Chile": "CLP", "Colombia": "COP",
-            "Peru": "PEN", "Venezuela": "VES", "Ecuador": "USD", "Uruguay": "UYU",
-            "Paraguay": "PYG", "Bolivia": "BOB", "Costa Rica": "CRC", "Panama": "PAB",
-            "Guatemala": "GTQ", "Honduras": "HNL", "Nicaragua": "NIO", "El Salvador": "USD",
-            "Dominican Republic": "DOP", "Jamaica": "JMD", "Trinidad": "TTD",
-            
-            # Other regions
-            "EUR": "EUR", "Europe": "EUR"
+            "China": "CNY", "Japan": "JPY", "India": "INR", "Singapore": "SGD",
+            "Hong Kong": "HKD", "Australia": "AUD"
         }
         
-        # Get currency for selected region
-        display_currency = currency_map.get(selected_region, "USD")  # Default to USD
+        # Get default currency for selected region
+        default_currency = currency_map.get(selected_region, "USD")
+        default_index = currency_options.index(default_currency) if default_currency in currency_options else 0
         
-        # Allow manual currency override if needed
-        st.metric("Currency", display_currency)
-        
-        # Optional: Allow users to override currency if mapping is incorrect
-        with st.expander("🔧 Override Currency (if needed)"):
-            all_currencies = sorted(list(set(currency_map.values())))
-            override_currency = st.selectbox(
-                "Select different currency:", 
-                ["Use Auto-Detected"] + all_currencies,
-                help="Override the auto-detected currency if incorrect"
-            )
-            if override_currency != "Use Auto-Detected":
-                display_currency = override_currency
+        selected_currency = st.selectbox("Select Currency", currency_options, index=default_index)
     
     # Filter data by selected region
     if "Region" in df.columns:
         region_df = df[df["Region"] == selected_region].copy()
     else:
         region_df = df.copy()  # Use all data if no region column
+    
+    # Display region info boxes (matching contracting module style)
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.info(f"**Region:** {selected_region}")
+    
+    with col2:
+        st.info(f"**Currency:** {selected_currency}")
+    
+    with col3:
+        st.info(f"**Records:** {len(region_df)}")
     
     if region_df.empty:
         st.warning(f"No data available for region: {selected_region}")
@@ -441,16 +484,20 @@ def display(df):
         
         # Filter items based on search
         if search_term_bulk:
-            filtered_items_bulk = [item for item in available_items if search_term_bulk.lower() in str(item).lower()]
+            filtered_bulk_items = [item for item in available_items if search_term_bulk.lower() in str(item).lower()]
         else:
-            filtered_items_bulk = available_items
+            filtered_bulk_items = list(available_items)  # Convert to list to avoid issues
+        
+        if not filtered_bulk_items:
+            st.warning(f"No items found matching '{search_term_bulk}'")
+            return
         
         # Bulk selection controls
         col1, col2, col3 = st.columns([1, 1, 4])
         
         with col1:
             if st.button("Select All Items"):
-                st.session_state.selected_bulk_items = filtered_items_bulk.tolist()
+                st.session_state.selected_bulk_items = filtered_bulk_items.copy()
         
         with col2:
             if st.button("Clear Selection"):
@@ -458,11 +505,16 @@ def display(df):
         
         # Initialize session state for bulk items
         if 'selected_bulk_items' not in st.session_state:
-            st.session_state.selected_bulk_items = filtered_items_bulk[:10].tolist()  # Default to first 10
+            st.session_state.selected_bulk_items = filtered_bulk_items[:10] if len(filtered_bulk_items) >= 10 else filtered_bulk_items.copy()
+        
+        # Ensure selected items are still valid after filtering
+        valid_selections = [item for item in st.session_state.selected_bulk_items if item in filtered_bulk_items]
+        if len(valid_selections) != len(st.session_state.selected_bulk_items):
+            st.session_state.selected_bulk_items = valid_selections
         
         selected_bulk_items = st.multiselect(
             "Select Items for Bulk Analysis:",
-            filtered_items_bulk,
+            filtered_bulk_items,
             default=st.session_state.selected_bulk_items,
             key="bulk_items_multiselect",
             help="Select multiple items to analyze simultaneously"
@@ -509,11 +561,11 @@ def display(df):
             with st.spinner("Analyzing items... This may take a moment."):
                 bulk_results = perform_bulk_analysis(
                     region_df, selected_bulk_items, bulk_lead_time, 
-                    bulk_safety_stock, analysis_period, display_currency
+                    bulk_safety_stock, analysis_period, selected_currency
                 )
                 
                 if bulk_results is not None:
-                    display_bulk_results(bulk_results, display_currency)
+                    display_bulk_results(bulk_results, selected_currency)
         
         selected_item = st.selectbox("Select Item", filtered_items)
         
@@ -798,7 +850,7 @@ def display(df):
                 ],
                 "Value": [
                     selected_region,
-                    display_currency,
+                    selected_currency,
                     selected_item,
                     f"{daily_demand.index.min()} to {daily_demand.index.max()}",
                     len(daily_demand),
@@ -833,7 +885,7 @@ def display(df):
                 export_data = {
                     'Item': [selected_item],
                     'Region': [selected_region],
-                    'Currency': [display_currency],
+                    'Currency': [selected_currency],
                     'Average Daily Demand': [avg_daily_demand],
                     'Lead Time (days)': [lead_time_days],
                     'Safety Stock': [safety_stock],
