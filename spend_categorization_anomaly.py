@@ -5551,41 +5551,41 @@ if __name__ == "__main__":
     
     display(df)
 , 'name': 'Chilean Peso', 'locale': 'es_CL'},
-    'CRC': {'symbol': '₡', 'name': 'Costa Rican Colón', 'locale': 'es_CR'},
+    'CRC': {'symbol': 'CRC', 'name': 'Costa Rican Colon', 'locale': 'es_CR'},
     'PAB': {'symbol': 'B/.', 'name': 'Panamanian Balboa', 'locale': 'es_PA'},
     
     # Europe
     'EUR': {'symbol': '€', 'name': 'Euro', 'locale': 'de_DE'},
     'GBP': {'symbol': '£', 'name': 'British Pound', 'locale': 'en_GB'},
     'CHF': {'symbol': 'CHF', 'name': 'Swiss Franc', 'locale': 'de_CH'},
-    'PLN': {'symbol': 'zł', 'name': 'Polish Złoty', 'locale': 'pl_PL'},
+    'PLN': {'symbol': 'PLN', 'name': 'Polish Zloty', 'locale': 'pl_PL'},
     'SEK': {'symbol': 'kr', 'name': 'Swedish Krona', 'locale': 'sv_SE'},
     'NOK': {'symbol': 'kr', 'name': 'Norwegian Krone', 'locale': 'nb_NO'},
     
     # Middle East
-    'AED': {'symbol': 'د.إ', 'name': 'UAE Dirham', 'locale': 'ar_AE'},
-    'SAR': {'symbol': '﷼', 'name': 'Saudi Riyal', 'locale': 'ar_SA'},
-    'QAR': {'symbol': '﷼', 'name': 'Qatari Riyal', 'locale': 'ar_QA'},
-    'KWD': {'symbol': 'د.ك', 'name': 'Kuwaiti Dinar', 'locale': 'ar_KW'},
-    'BHD': {'symbol': '.د.ب', 'name': 'Bahraini Dinar', 'locale': 'ar_BH'},
-    'OMR': {'symbol': '﷼', 'name': 'Omani Rial', 'locale': 'ar_OM'},
-    'JOD': {'symbol': 'د.ا', 'name': 'Jordanian Dinar', 'locale': 'ar_JO'},
-    'LBP': {'symbol': '£', 'name': 'Lebanese Pound', 'locale': 'ar_LB'},
+    'AED': {'symbol': 'AED', 'name': 'UAE Dirham', 'locale': 'ar_AE'},
+    'SAR': {'symbol': 'SAR', 'name': 'Saudi Riyal', 'locale': 'ar_SA'},
+    'QAR': {'symbol': 'QAR', 'name': 'Qatari Riyal', 'locale': 'ar_QA'},
+    'KWD': {'symbol': 'KWD', 'name': 'Kuwaiti Dinar', 'locale': 'ar_KW'},
+    'BHD': {'symbol': 'BHD', 'name': 'Bahraini Dinar', 'locale': 'ar_BH'},
+    'OMR': {'symbol': 'OMR', 'name': 'Omani Rial', 'locale': 'ar_OM'},
+    'JOD': {'symbol': 'JOD', 'name': 'Jordanian Dinar', 'locale': 'ar_JO'},
+    'LBP': {'symbol': 'LBP', 'name': 'Lebanese Pound', 'locale': 'ar_LB'},
     
     # Africa
     'ZAR': {'symbol': 'R', 'name': 'South African Rand', 'locale': 'en_ZA'},
-    'NGN': {'symbol': '₦', 'name': 'Nigerian Naira', 'locale': 'en_NG'},
-    'EGP': {'symbol': '£', 'name': 'Egyptian Pound', 'locale': 'ar_EG'},
+    'NGN': {'symbol': 'NGN', 'name': 'Nigerian Naira', 'locale': 'en_NG'},
+    'EGP': {'symbol': 'EGP', 'name': 'Egyptian Pound', 'locale': 'ar_EG'},
     'KES': {'symbol': 'KSh', 'name': 'Kenyan Shilling', 'locale': 'en_KE'},
-    'GHS': {'symbol': '₵', 'name': 'Ghanaian Cedi', 'locale': 'en_GH'},
-    'MAD': {'symbol': 'د.م.', 'name': 'Moroccan Dirham', 'locale': 'ar_MA'},
-    'TND': {'symbol': 'د.ت', 'name': 'Tunisian Dinar', 'locale': 'ar_TN'},
+    'GHS': {'symbol': 'GHS', 'name': 'Ghanaian Cedi', 'locale': 'en_GH'},
+    'MAD': {'symbol': 'MAD', 'name': 'Moroccan Dirham', 'locale': 'ar_MA'},
+    'TND': {'symbol': 'TND', 'name': 'Tunisian Dinar', 'locale': 'ar_TN'},
     'AOA': {'symbol': 'Kz', 'name': 'Angolan Kwanza', 'locale': 'pt_AO'},
     
     # Asia Pacific
     'JPY': {'symbol': '¥', 'name': 'Japanese Yen', 'locale': 'ja_JP'},
     'CNY': {'symbol': '¥', 'name': 'Chinese Yuan', 'locale': 'zh_CN'},
-    'INR': {'symbol': '₹', 'name': 'Indian Rupee', 'locale': 'hi_IN'},
+    'INR': {'symbol': 'INR', 'name': 'Indian Rupee', 'locale': 'hi_IN'},
     'AUD': {'symbol': 'A
 
 def detect_region_from_data(df: pd.DataFrame) -> str:
@@ -7130,8 +7130,8 @@ if __name__ == "__main__":
     
     display(df)
 , 'name': 'Singapore Dollar', 'locale': 'en_SG'},
-    'KRW': {'symbol': '₩', 'name': 'South Korean Won', 'locale': 'ko_KR'},
-    'THB': {'symbol': '฿', 'name': 'Thai Baht', 'locale': 'th_TH'},
+    'KRW': {'symbol': 'KRW', 'name': 'South Korean Won', 'locale': 'ko_KR'},
+    'THB': {'symbol': 'THB', 'name': 'Thai Baht', 'locale': 'th_TH'},
     'MYR': {'symbol': 'RM', 'name': 'Malaysian Ringgit', 'locale': 'ms_MY'},
 }
 
