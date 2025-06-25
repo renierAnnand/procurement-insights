@@ -99,33 +99,81 @@ CURRENCY_CONFIG = {
     'KRW': {'symbol': 'KRW', 'name': 'South Korean Won'},
 }
 
-def detect_region_from_data(df):
-    """Detect region based on vendor names and data patterns"""
+def detect_regions_in_data(df):
+    """Detect which regions are actually present in the imported data"""
     vendor_names = ' '.join(df['Vendor Name'].astype(str).str.lower())
     
-    # Regional vendor indicators
+    # Regional vendor indicators with scoring
     regional_indicators = {
-        'Latin America': ['colombia', 'sas', 'ltda', 'bogota', 'brasil', 'mexico', 'argentina'],
-        'Europe': ['gmbh', 'sarl', 'ltd', 'plc', 'spa', 'bv', 'ag', 'london', 'paris'],
-        'North America': ['corp', 'inc', 'llc', 'co', 'corporation', 'canada', 'toronto'],
-        'Middle East': ['dubai', 'abu dhabi', 'saudi', 'qatar', 'kuwait', 'emirates', 'fze', 'fzco'],
-        'Africa': ['south africa', 'nigeria', 'egypt', 'kenya', 'ghana', 'pty', 'proprietary'],
-        'Asia Pacific': ['co.ltd', 'pte', 'singapore', 'tokyo', 'mumbai', 'private limited']
+        'Latin America': ['colombia', 'sas', 'ltda', 'bogota', 'brasil', 'mexico', 'argentina', 
+                         'sa de cv', 'cia', 'peru', 'chile', 'costa rica', 'panama',
+                         'sociedad', 'limitada', 'anonima', 'responsabilidad'],
+        'Europe': ['gmbh', 'sarl', 'ltd', 'plc', 'spa', 'bv', 'ag', 'ab', 'as',
+                   'limited', 'gesellschaft', 'societe', 'societa', 'besloten',
+                   'london', 'paris', 'berlin', 'madrid', 'amsterdam', 'stockholm'],
+        'North America': ['corp', 'inc', 'llc', 'co', 'corporation', 'incorporated',
+                         'canada', 'toronto', 'vancouver', 'montreal'],
+        'Middle East': ['dubai', 'abu dhabi', 'saudi', 'qatar', 'kuwait', 'bahrain',
+                       'emirates', 'riyadh', 'doha', 'manama', 'muscat', 'amman',
+                       'fze', 'fzco', 'establishment', 'trading', 'wll'],
+        'Africa': ['south africa', 'nigeria', 'egypt', 'kenya', 'ghana', 'morocco',
+                   'johannesburg', 'cape town', 'lagos', 'cairo', 'nairobi', 'accra',
+                   'casablanca', 'tunis', 'luanda', 'pty', 'proprietary', 'cc'],
+        'Asia Pacific': ['co.ltd', 'pte', 'kabushiki', 'singapore', 'tokyo', 'osaka',
+                        'mumbai', 'delhi', 'bangkok', 'kuala lumpur', 'sydney', 'melbourne',
+                        'private limited', 'sdn bhd', 'thailand', 'malaysia', 'australia']
     }
     
-    # Score each region
-    region_scores = {}
+    # Score each region and get vendor counts
+    regions_found = {}
+    
     for region, indicators in regional_indicators.items():
         score = sum(1 for indicator in indicators if indicator in vendor_names)
-        region_scores[region] = score
+        
+        if score > 0:
+            # Count vendors that match this region
+            matching_vendors = []
+            for _, row in df.iterrows():
+                vendor_name = str(row['Vendor Name']).lower()
+                if any(indicator in vendor_name for indicator in indicators):
+                    matching_vendors.append(row['Vendor Name'])
+            
+            if matching_vendors:
+                regions_found[region] = {
+                    'score': score,
+                    'vendor_count': len(set(matching_vendors)),
+                    'vendors': list(set(matching_vendors)),
+                    'total_spend': df[df['Vendor Name'].isin(matching_vendors)]['Line Total'].sum() if 'Line Total' in df.columns else 0,
+                    'transaction_count': len(df[df['Vendor Name'].isin(matching_vendors)])
+                }
     
-    # Find best match
-    if region_scores:
-        best_region = max(region_scores.items(), key=lambda x: x[1])
-        if best_region[1] > 0:
-            return best_region[0]
+    # If no regions detected by keywords, try currency/price analysis
+    if not regions_found and 'Unit Price' in df.columns:
+        avg_price = df['Unit Price'].mean()
+        
+        if avg_price > 50000:  # High denomination currencies
+            regions_found['Latin America'] = {
+                'score': 1, 'vendor_count': df['Vendor Name'].nunique(),
+                'vendors': df['Vendor Name'].unique().tolist(),
+                'total_spend': df['Line Total'].sum() if 'Line Total' in df.columns else 0,
+                'transaction_count': len(df)
+            }
+        elif avg_price > 1000:
+            regions_found['Africa'] = {
+                'score': 1, 'vendor_count': df['Vendor Name'].nunique(),
+                'vendors': df['Vendor Name'].unique().tolist(),
+                'total_spend': df['Line Total'].sum() if 'Line Total' in df.columns else 0,
+                'transaction_count': len(df)
+            }
+        else:
+            regions_found['North America'] = {
+                'score': 1, 'vendor_count': df['Vendor Name'].nunique(),
+                'vendors': df['Vendor Name'].unique().tolist(),
+                'total_spend': df['Line Total'].sum() if 'Line Total' in df.columns else 0,
+                'transaction_count': len(df)
+            }
     
-    return 'North America'  # Default
+    return regions_found
 
 def format_currency(value, currency='USD', show_decimals=True):
     """Format currency with proper formatting"""
@@ -322,22 +370,52 @@ def display(df):
     st.header("Advanced Spend Analytics and Anomaly Detection")
     st.markdown("AI-powered spend categorization with ML clustering, regional filtering, and time-series anomaly analysis.")
     
+    # Calculate line total if missing for region detection
+    if 'Line Total' not in df.columns and 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
+        df['Line Total'] = df['Unit Price'] * df['Qty Delivered']
+    
+    # Detect regions in the imported data
+    regions_in_data = detect_regions_in_data(df)
+    
+    if not regions_in_data:
+        st.error("No recognizable business regions found in your data. Please check vendor names and data format.")
+        return
+    
     # Regional Configuration Sidebar
     with st.sidebar:
         st.subheader("Regional Settings")
         
-        # Auto-detect region
-        detected_region = detect_region_from_data(df)
+        # Show detected regions summary
+        st.write("**Regions Found in Your Data:**")
+        for region, info in regions_in_data.items():
+            st.write(f"• **{region}**: {info['vendor_count']} vendors, {info['transaction_count']} transactions")
         
-        # Region selection
-        region_options = list(REGION_CONFIG.keys())
-        region_idx = region_options.index(detected_region) if detected_region in region_options else 0
+        st.markdown("---")
+        
+        # Region selection - only show regions found in data
+        available_regions = list(regions_in_data.keys())
+        
+        # Default to region with highest spend
+        default_region = max(regions_in_data.items(), key=lambda x: x[1]['total_spend'])[0]
+        default_idx = available_regions.index(default_region)
+        
         selected_region = st.selectbox(
-            "Select Region",
-            region_options,
-            index=region_idx,
-            format_func=lambda x: f"[{REGION_CONFIG[x]['flag']}] {x}"
+            "Select Business Region to Analyze",
+            available_regions,
+            index=default_idx,
+            format_func=lambda x: f"[{REGION_CONFIG[x]['flag']}] {x} ({regions_in_data[x]['vendor_count']} vendors)"
         )
+        
+        # Show detailed info about selected region
+        region_info = regions_in_data[selected_region]
+        region_config = REGION_CONFIG[selected_region]
+        primary_currency = region_config['primary_currency']
+        st.info(f"""
+        **{selected_region} Details:**
+        - Vendors: {region_info['vendor_count']}
+        - Transactions: {region_info['transaction_count']}
+        - Total Spend: {region_info['total_spend']:,.0f}
+        """)
         
         # Get region config
         region_config = REGION_CONFIG[selected_region]
@@ -363,19 +441,28 @@ def display(df):
         else:
             scale_large_numbers = False
         
-        st.info(f"Detected: {detected_region}")
-        st.info(f"Countries: {', '.join(region_config['countries'][:3])}")
+        # Regional vendor preview
+        st.subheader("Regional Vendors Preview")
+        preview_vendors = region_info['vendors'][:5]
+        for vendor in preview_vendors:
+            st.write(f"• {vendor}")
+        if len(region_info['vendors']) > 5:
+            st.write(f"... and {len(region_info['vendors']) - 5} more")
+    
+    # Filter data to selected region
+    region_vendors = regions_in_data[selected_region]['vendors']
+    df_regional = df[df['Vendor Name'].isin(region_vendors)].copy()
     
     # Data validation and cleaning
     required_columns = ['Vendor Name', 'Unit Price', 'Qty Delivered']
-    missing_columns = [col for col in required_columns if col not in df.columns]
+    missing_columns = [col for col in required_columns if col not in df_regional.columns]
     
     if missing_columns:
         st.error(f"Missing required columns: {', '.join(missing_columns)}")
         return
     
     # Clean and prepare data
-    df_clean = df.copy()
+    df_clean = df_regional.copy()
     df_clean = df_clean.dropna(subset=required_columns)
     df_clean = df_clean[df_clean['Unit Price'] > 0]
     df_clean = df_clean[df_clean['Qty Delivered'] > 0]
@@ -384,7 +471,7 @@ def display(df):
         df_clean['Line Total'] = df_clean['Unit Price'] * df_clean['Qty Delivered']
     
     if len(df_clean) == 0:
-        st.warning("No valid data found for analysis.")
+        st.warning("No valid data found for the selected region.")
         return
     
     # Apply currency scaling
@@ -401,31 +488,53 @@ def display(df):
             decimals = show_decimals
         return format_currency(value, selected_currency, decimals)
     
-    # Vendor filtering
-    st.subheader("Vendor Filtering")
-    all_vendors = sorted(df_clean['Vendor Name'].unique())
-    selected_vendors = create_vendor_multiselect(all_vendors, "main")
+    # Regional Data Overview
+    st.subheader(f"Regional Data Overview: {selected_region}")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Region", selected_region)
+    with col2:
+        st.metric("Currency", f"{selected_currency}")
+    with col3:
+        st.metric("Regional Vendors", f"{len(region_vendors):,}")
+    with col4:
+        st.metric("Total Transactions", f"{len(df_clean):,}")
+    with col5:
+        st.metric("Total Regional Spend", format_amount(df_clean['Line Total'].sum(), False))
+    
+    # Show data coverage across all regions
+    with st.expander("View All Regions in Your Data"):
+        regions_summary = []
+        for region, info in regions_in_data.items():
+            regions_summary.append({
+                'Region': region,
+                'Vendors': info['vendor_count'],
+                'Transactions': info['transaction_count'],
+                'Total Spend': info['total_spend'],
+                'Avg Transaction': info['total_spend'] / info['transaction_count'] if info['transaction_count'] > 0 else 0
+            })
+        
+        summary_df = pd.DataFrame(regions_summary)
+        summary_df['Total Spend'] = summary_df['Total Spend'].apply(lambda x: f"{x:,.0f}")
+        summary_df['Avg Transaction'] = summary_df['Avg Transaction'].apply(lambda x: f"{x:,.0f}")
+        
+        st.dataframe(summary_df, use_container_width=True)
+    
+    # Vendor filtering within selected region
+    st.subheader("Vendor Filtering (Regional)")
+    regional_vendors = sorted(df_clean['Vendor Name'].unique())
+    selected_vendors = create_vendor_multiselect(regional_vendors, f"regional_{selected_region}")
     
     # Filter data by selected vendors
     if selected_vendors:
         df_filtered = df_clean[df_clean['Vendor Name'].isin(selected_vendors)]
     else:
         df_filtered = df_clean
-        st.warning("No vendors selected. Showing all data.")
-    
-    # Display summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Region", selected_region)
-    with col2:
-        st.metric("Currency", f"{selected_currency} {CURRENCY_CONFIG[selected_currency]['symbol']}")
-    with col3:
-        st.metric("Records", f"{len(df_filtered):,}")
-    with col4:
-        st.metric("Total Spend", format_amount(df_filtered['Line Total'].sum(), False))
+        st.warning("No vendors selected. Showing all regional data.")
     
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["ML Categorization", "Anomaly Detection", "Anomaly Trends", "Insights"])
+    tab1, tab2, tab3, tab4 = st.tabs(["ML Categorization", f"{selected_region} Anomalies", "Anomaly Trends", f"{selected_region} Intelligence"])
     
     with tab1:
         st.subheader(f"Machine Learning-Based Categorization {currency_suffix}")
@@ -521,13 +630,13 @@ def display(df):
             ]
         
         if st.button("Detect Regional Anomalies", type="primary"):
-            with st.spinner("Detecting anomalies within region..."):
+            with st.spinner(f"Detecting anomalies in {selected_region} region..."):
                 
                 # Filter by minimum amount and region
                 df_anomaly = df_filtered[df_filtered['Line Total'] >= min_amount].copy()
                 
                 if len(df_anomaly) == 0:
-                    st.warning("No data above minimum threshold for anomaly detection.")
+                    st.warning(f"No data above minimum threshold for anomaly detection in {selected_region}.")
                 else:
                     # Prepare features
                     features = ['Unit Price', 'Qty Delivered', 'Line Total']
@@ -596,7 +705,7 @@ def display(df):
                         st.session_state['anomaly_data'] = df_anomaly
                     
                     else:
-                        st.success("No significant anomalies detected with current settings.")
+                        st.success(f"No significant anomalies detected in {selected_region} with current settings.")
     
     with tab3:
         st.subheader("Anomaly Trends Over Time")
@@ -654,112 +763,216 @@ def display(df):
             st.info("No anomaly data available. Please run anomaly detection first.")
     
     with tab4:
-        st.subheader(f"Regional Insights and Recommendations")
+        st.subheader(f"{selected_region} Business Intelligence")
         
-        # Regional summary
-        st.subheader(f"{selected_region} Summary")
+        # Regional summary based on actual data
+        st.subheader(f"Data-Driven {selected_region} Analysis")
+        
+        region_info = regions_in_data[selected_region]
         
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Region", selected_region)
-            st.metric("Primary Currency", f"{primary_currency} {CURRENCY_CONFIG[primary_currency]['symbol']}")
+            st.metric("Primary Currency", f"{primary_currency}")
+            st.metric("Detection Score", f"{region_info['score']} indicators")
         with col2:
-            st.metric("Vendors Analyzed", len(selected_vendors))
-            st.metric("Total Records", f"{len(df_filtered):,}")
+            st.metric("Regional Vendors", f"{region_info['vendor_count']}")
+            st.metric("Active Vendors", len(selected_vendors))
+            st.metric("Vendor Selection", f"{len(selected_vendors)}/{region_info['vendor_count']}")
         with col3:
-            st.metric("Date Range", 
-                     f"{df_filtered['Creation Date'].min().strftime('%Y-%m-%d')} to {df_filtered['Creation Date'].max().strftime('%Y-%m-%d')}" 
-                     if 'Creation Date' in df_filtered.columns else "N/A")
+            st.metric("Regional Transactions", f"{region_info['transaction_count']:,}")
+            st.metric("Filtered Transactions", f"{len(df_filtered):,}")
+            if 'Creation Date' in df_filtered.columns:
+                date_range_days = (df_filtered['Creation Date'].max() - df_filtered['Creation Date'].min()).days
+                st.metric("Date Range", f"{date_range_days} days")
+            else:
+                st.metric("Date Range", "N/A")
         
-        # Key insights
-        st.subheader("Key Insights")
+        # Data-driven insights
+        st.subheader("Key Business Insights from Your Data")
         
-        # Vendor concentration
+        insights = []
+        
+        # Vendor concentration analysis
         vendor_spend = df_filtered.groupby('Vendor Name')['Line Total'].sum().sort_values(ascending=False)
-        top_3_share = (vendor_spend.head(3).sum() / vendor_spend.sum() * 100)
+        top_3_share = (vendor_spend.head(3).sum() / vendor_spend.sum() * 100) if len(vendor_spend) > 0 else 0
         
-        insights = [
-            f"**Vendor Concentration**: Top 3 vendors account for {top_3_share:.1f}% of regional spend",
-            f"**Average Transaction**: {format_amount(df_filtered['Line Total'].mean(), False)} in {selected_region}",
-        ]
+        if len(vendor_spend) >= 3:
+            insights.append(f"**Vendor Concentration Risk**: Top 3 vendors ({vendor_spend.head(3).index.tolist()}) represent {top_3_share:.1f}% of spend")
         
+        # Transaction patterns
+        avg_transaction = df_filtered['Line Total'].mean()
+        median_transaction = df_filtered['Line Total'].median()
+        insights.append(f"**Transaction Profile**: Average {format_amount(avg_transaction, False)}, Median {format_amount(median_transaction, False)}")
+        
+        # Price analysis
+        if len(df_filtered) > 0:
+            price_cv = (df_filtered['Unit Price'].std() / df_filtered['Unit Price'].mean()) * 100
+            if price_cv > 100:
+                insights.append(f"**Price Volatility**: High price variation detected ({price_cv:.0f}% coefficient of variation)")
+            elif price_cv > 50:
+                insights.append(f"**Price Volatility**: Moderate price variation ({price_cv:.0f}% coefficient of variation)")
+            else:
+                insights.append(f"**Price Stability**: Consistent pricing patterns ({price_cv:.0f}% coefficient of variation)")
+        
+        # Regional vendor analysis
+        region_vendor_types = []
+        for vendor in region_info['vendors'][:10]:  # Top 10 vendors
+            vendor_lower = vendor.lower()
+            if any(ind in vendor_lower for ind in ['energy', 'power', 'electric']):
+                region_vendor_types.append('Energy')
+            elif any(ind in vendor_lower for ind in ['tech', 'siemens', 'digital', 'software']):
+                region_vendor_types.append('Technology')
+            elif any(ind in vendor_lower for ind in ['trading', 'distribution', 'supply']):
+                region_vendor_types.append('Trading/Distribution')
+            elif any(ind in vendor_lower for ind in ['construction', 'engineering', 'industrial']):
+                region_vendor_types.append('Industrial')
+        
+        if region_vendor_types:
+            from collections import Counter
+            vendor_type_counts = Counter(region_vendor_types)
+            most_common_type = vendor_type_counts.most_common(1)[0]
+            insights.append(f"**Regional Industry Focus**: {most_common_type[0]} sector dominates with {most_common_type[1]} major vendors")
+        
+        # Display insights
         for insight in insights:
             st.write(f"• {insight}")
         
-        # Regional recommendations
-        st.subheader("Regional Recommendations")
+        # Data quality assessment
+        st.subheader("Data Quality Assessment")
         
-        region_recommendations = {
+        quality_metrics = []
+        
+        # Completeness
+        total_records = len(df_filtered)
+        complete_records = len(df_filtered.dropna(subset=['Vendor Name', 'Unit Price', 'Qty Delivered']))
+        completeness = (complete_records / total_records * 100) if total_records > 0 else 0
+        quality_metrics.append(f"**Data Completeness**: {completeness:.1f}% ({complete_records}/{total_records} complete records)")
+        
+        # Vendor name consistency
+        unique_vendors = df_filtered['Vendor Name'].nunique()
+        potential_duplicates = len(df_filtered) - len(df_filtered.groupby('Vendor Name').first())
+        if potential_duplicates > 0:
+            quality_metrics.append(f"**Vendor Consistency**: {unique_vendors} unique vendors identified")
+        
+        # Date coverage
+        if 'Creation Date' in df_filtered.columns:
+            date_gaps = pd.to_datetime(df_filtered['Creation Date']).diff().dt.days.max()
+            if date_gaps > 30:
+                quality_metrics.append(f"**Temporal Coverage**: Largest gap between transactions: {date_gaps} days")
+        
+        for metric in quality_metrics:
+            st.write(f"• {metric}")
+        
+        # Regional recommendations based on actual data
+        st.subheader("Data-Driven Regional Recommendations")
+        
+        recommendations = []
+        
+        # Vendor concentration recommendations
+        if top_3_share > 70:
+            recommendations.append(f"**High Vendor Risk**: Consider diversifying suppliers - top vendors control {top_3_share:.1f}% of spend")
+        elif top_3_share < 30:
+            recommendations.append(f"**Vendor Fragmentation**: Consider consolidating suppliers for better pricing power")
+        
+        # Transaction size recommendations
+        if avg_transaction > median_transaction * 3:
+            recommendations.append("**Transaction Optimization**: Large variations in order sizes - review procurement policies")
+        
+        # Regional specific recommendations
+        region_specific_recommendations = {
             'Latin America': [
-                "Consider local currency hedging strategies for volatility",
-                "Leverage regional trade agreements for cost optimization",
-                "Focus on local supplier development programs"
+                f"**Currency Strategy**: Monitor {selected_currency} volatility for budget planning",
+                "**Local Partnerships**: Leverage strong regional vendor relationships identified",
+                "**Compliance Focus**: Ensure vendors meet local regulatory requirements"
             ],
             'North America': [
-                "Optimize cross-border procurement with trade benefits",
-                "Leverage nearshoring opportunities",
-                "Consider consolidated distribution centers"
+                f"**Cross-Border Efficiency**: Optimize {selected_currency} transactions for tax benefits",
+                "**Technology Integration**: Leverage advanced vendor capabilities detected",
+                "**Scalability Planning**: Build on stable vendor base for growth"
             ],
             'Europe': [
-                "Maximize EU single market benefits",
-                "Monitor post-Brexit supplier relationships",
-                "Consider multi-currency hedging strategies"
+                f"**EU Market Advantage**: Maximize single market benefits with {region_info['vendor_count']} vendors",
+                "**Sustainability Focus**: Align with European ESG requirements",
+                "**Multi-Currency Hedging**: Manage EUR/GBP exposure effectively"
             ],
             'Middle East': [
-                "Take advantage of regional trading hubs",
-                "Consider free zone benefits for imports",
-                "Leverage stable currency pegs for predictability"
+                f"**Regional Hub Strategy**: Leverage {selected_region} as procurement center",
+                "**Local Content**: Optimize for regional development requirements",
+                f"**Currency Stability**: Take advantage of {selected_currency} predictability"
             ],
             'Africa': [
-                "Diversify across multiple markets",
-                "Monitor currency volatility and plan accordingly",
-                "Consider local partnerships for regulatory compliance"
+                f"**Market Diversification**: Expand beyond current {region_info['vendor_count']} vendor base",
+                "**Local Development**: Support regional supplier capability building",
+                f"**Risk Management**: Monitor {selected_currency} currency fluctuations"
             ],
             'Asia Pacific': [
-                "Diversify supply chain across countries",
-                "Monitor multi-currency volatility with hedging",
-                "Leverage regional financial hubs"
+                f"**Supply Chain Resilience**: Diversify across {region_info['vendor_count']} regional vendors",
+                "**Innovation Partnership**: Leverage regional technology capabilities",
+                f"**Multi-Currency Strategy**: Manage {selected_currency} and regional currency exposure"
             ]
         }
         
-        recommendations = region_recommendations.get(selected_region, [])
+        # Add data-driven recommendations
+        recommendations.extend(region_specific_recommendations.get(selected_region, []))
+        
         for rec in recommendations:
             st.write(f"• {rec}")
         
-        # Export functionality
-        st.subheader("Export Data")
+        # Action items based on data analysis
+        st.subheader("Data-Driven Action Plan")
+        
+        st.markdown(f"""
+        **Immediate Actions (Based on Your {selected_region} Data):**
+        - Review top {min(3, len(vendor_spend))} vendors representing {top_3_share:.1f}% of spend
+        - Analyze {len(df_filtered)} transactions for optimization opportunities
+        - Validate data quality across {region_info['transaction_count']} regional transactions
+        
+        **Short-term (Next 30 Days):**
+        - Implement vendor performance monitoring for {len(selected_vendors)} active suppliers
+        - Establish {selected_currency} budget controls and variance alerts
+        - Create regional procurement dashboard for {selected_region} operations
+        
+        **Long-term (Next Quarter):**
+        - Develop strategic partnerships with top-performing regional vendors
+        - Implement predictive analytics based on {len(df_filtered)} transaction patterns
+        - Establish regional centers of excellence for {selected_region} procurement
+        """)
+        
+        # Export functionality with regional context
+        st.subheader("Export Regional Analysis")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("Export Filtered Data"):
+            if st.button("Export Regional Data"):
                 csv = df_filtered.to_csv(index=False)
                 st.download_button(
-                    "Download Filtered CSV",
+                    "Download Regional CSV",
                     csv,
-                    f"spend_data_{selected_region}_{selected_currency}.csv",
+                    f"spend_analysis_{selected_region}_{selected_currency}.csv",
                     "text/csv"
                 )
         
         with col2:
             if 'categorized_data' in st.session_state:
-                if st.button("Export Categorized Data"):
+                if st.button("Export Categorized Analysis"):
                     csv = st.session_state['categorized_data'].to_csv(index=False)
                     st.download_button(
                         "Download Categorized CSV",
                         csv,
-                        f"categorized_spend_{selected_region}.csv",
+                        f"categorized_analysis_{selected_region}.csv",
                         "text/csv"
                     )
         
         with col3:
             if 'anomaly_data' in st.session_state:
-                if st.button("Export Anomaly Data"):
+                if st.button("Export Anomaly Analysis"):
                     csv = st.session_state['anomaly_data'].to_csv(index=False)
                     st.download_button(
                         "Download Anomaly CSV",
                         csv,
-                        f"anomalies_{selected_region}_{selected_currency}.csv",
+                        f"anomaly_analysis_{selected_region}_{selected_currency}.csv",
                         "text/csv"
                     )
 
@@ -769,20 +982,20 @@ if __name__ == "__main__":
     # Generate sample data
     np.random.seed(42)
     
-    # Global regions with realistic data
+    # Global regions with more realistic and detectable vendor names
     regions_data = {
         'Latin America': {
-            'vendors': ['AZUL ENERGY COLOMBIA S.A.S.', 'SIEMENS SAS', 'DISTRIBUTION PLUS S.A.S', 'SMARTPROCESS COLOMBIA SAS', 'AUTOAMERICA S.A.'],
+            'vendors': ['AZUL ENERGY COLOMBIA S.A.S.', 'SIEMENS COLOMBIA SAS', 'DISTRIBUTION PLUS LTDA', 'SMARTPROCESS BOGOTA S.A.S', 'AUTOAMERICA BRASIL LTDA'],
             'price_range': (50000, 5000000),
             'currency': 'COP'
         },
         'North America': {
-            'vendors': ['ACME CORP', 'TECH SOLUTIONS INC', 'INDUSTRIAL SUPPLY LLC', 'TRANSPORT SERVICES', 'OFFICE DEPOT INC'],
+            'vendors': ['ACME CORPORATION', 'TECH SOLUTIONS INC', 'INDUSTRIAL SUPPLY LLC', 'TRANSPORT CORP', 'OFFICE DEPOT INCORPORATED'],
             'price_range': (50, 5000),
             'currency': 'USD'
         },
         'Europe': {
-            'vendors': ['SIEMENS AG', 'TOTAL ENERGIES SARL', 'INDUSTRIAL SOLUTIONS GMBH', 'EURO TRANSPORT LTD', 'OFFICE SOLUTIONS PLC'],
+            'vendors': ['SIEMENS AG', 'TOTAL ENERGIES SARL', 'INDUSTRIAL SOLUTIONS GMBH', 'EURO TRANSPORT LIMITED', 'OFFICE SOLUTIONS PLC'],
             'price_range': (40, 4000),
             'currency': 'EUR'
         },
@@ -792,26 +1005,26 @@ if __name__ == "__main__":
             'currency': 'AED'
         },
         'Africa': {
-            'vendors': ['SOUTH AFRICAN MINING PTY LTD', 'NIGERIA INDUSTRIAL LIMITED', 'EGYPT CONSTRUCTION CO', 'KENYA SERVICES LTD', 'GHANA TRADING CC'],
+            'vendors': ['SOUTH AFRICAN MINING PTY LTD', 'NIGERIA INDUSTRIAL LIMITED', 'EGYPT CONSTRUCTION COMPANY', 'KENYA SERVICES PROPRIETARY LTD', 'GHANA TRADING CC'],
             'price_range': (800, 80000),
             'currency': 'ZAR'
         },
         'Asia Pacific': {
-            'vendors': ['TOKYO INDUSTRIAL CO LTD', 'SINGAPORE TECH PTE', 'MUMBAI SERVICES PRIVATE LIMITED', 'SYDNEY EQUIPMENT PTY', 'BANGKOK TRADING CO'],
+            'vendors': ['TOKYO INDUSTRIAL CO LTD', 'SINGAPORE TECH PTE LTD', 'MUMBAI SERVICES PRIVATE LIMITED', 'SYDNEY EQUIPMENT PTY LTD', 'BANGKOK TRADING CO LTD'],
             'price_range': (3000, 300000),
             'currency': 'JPY'
         }
     }
     
-    # Generate mixed regional data
+    # Generate mixed regional data for testing
     all_data = []
     
     for region, config in regions_data.items():
-        n_records = 100
+        n_records = 50  # Smaller samples for better detection
         
         sample_data = {
             'Vendor Name': np.random.choice(config['vendors'], n_records),
-            'Item': [f"Item-{np.random.randint(1000, 9999)}" for _ in range(n_records)],
+            'Item': [f"Item-{region[:3].upper()}-{np.random.randint(1000, 9999)}" for _ in range(n_records)],
             'Unit Price': np.random.uniform(config['price_range'][0], config['price_range'][1], n_records),
             'Qty Delivered': np.random.randint(1, 100, n_records),
             'Creation Date': pd.date_range('2024-01-01', periods=n_records, freq='D'),
@@ -825,5 +1038,8 @@ if __name__ == "__main__":
     
     # Combine all regional data
     df = pd.concat(all_data, ignore_index=True)
+    
+    # Add some mixed data for better testing
+    df = df.sample(frac=1).reset_index(drop=True)  # Shuffle the data
     
     display(df)
