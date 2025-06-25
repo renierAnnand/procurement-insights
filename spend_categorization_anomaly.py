@@ -21,42 +21,42 @@ REGION_CONFIG = {
         'primary_currency': 'USD',
         'currencies': ['USD', 'CAD'],
         'timezone': 'America/New_York',
-        'flag': '🇺🇸'
+        'flag': 'NA'
     },
     'Latin America': {
         'countries': ['Mexico', 'Colombia', 'Brazil', 'Argentina', 'Peru', 'Chile', 'Costa Rica', 'Panama'],
         'primary_currency': 'USD',
         'currencies': ['MXN', 'COP', 'BRL', 'ARS', 'PEN', 'CLP', 'CRC', 'PAB', 'USD'],
         'timezone': 'America/Mexico_City',
-        'flag': '🌎'
+        'flag': 'LATAM'
     },
     'Europe': {
         'countries': ['Germany', 'France', 'Spain', 'Italy', 'UK', 'Netherlands', 'Poland', 'Sweden', 'Norway'],
         'primary_currency': 'EUR',
         'currencies': ['EUR', 'GBP', 'PLN', 'SEK', 'NOK', 'CHF'],
         'timezone': 'Europe/London',
-        'flag': '🇪🇺'
+        'flag': 'EU'
     },
     'Middle East': {
         'countries': ['UAE', 'Saudi Arabia', 'Qatar', 'Kuwait', 'Bahrain', 'Oman', 'Jordan', 'Lebanon'],
         'primary_currency': 'AED',
         'currencies': ['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'LBP'],
         'timezone': 'Asia/Dubai',
-        'flag': '🏛️'
+        'flag': 'ME'
     },
     'Africa': {
         'countries': ['South Africa', 'Nigeria', 'Egypt', 'Kenya', 'Ghana', 'Morocco', 'Tunisia', 'Angola'],
         'primary_currency': 'ZAR',
         'currencies': ['ZAR', 'NGN', 'EGP', 'KES', 'GHS', 'MAD', 'TND', 'AOA'],
         'timezone': 'Africa/Johannesburg',
-        'flag': '🌍'
+        'flag': 'AF'
     },
     'Asia Pacific': {
         'countries': ['Japan', 'China', 'India', 'Australia', 'Singapore', 'South Korea', 'Thailand', 'Malaysia'],
         'primary_currency': 'USD',
         'currencies': ['JPY', 'CNY', 'INR', 'AUD', 'SGD', 'KRW', 'THB', 'MYR'],
         'timezone': 'Asia/Tokyo',
-        'flag': '🌏'
+        'flag': 'APAC'
     }
 }
 
@@ -146,11 +146,11 @@ def format_currency(value: float, currency: str = 'USD', show_decimals: bool = T
         symbol = config['symbol']
         
         if currency in ['JPY', 'COP', 'CLP'] and not show_decimals:
-            return f"{symbol}{value:,.0f}"
+            return f"{symbol} {value:,.0f}"
         elif show_decimals:
-            return f"{symbol}{value:,.2f}"
+            return f"{symbol} {value:,.2f}"
         else:
-            return f"{symbol}{value:,.0f}"
+            return f"{symbol} {value:,.0f}"
     except:
         return f"${value:,.2f}"
 
@@ -335,22 +335,22 @@ def analyze_anomaly_trends(df: pd.DataFrame, date_column: str = 'Creation Date')
 
 def display(df):
     """Enhanced Spend Categorization & Anomaly Detection Module"""
-    st.header("📊 Advanced Spend Analytics & Anomaly Detection")
+    st.header("Advanced Spend Analytics & Anomaly Detection")
     st.markdown("AI-powered spend categorization with ML clustering, regional filtering, and time-series anomaly analysis.")
     
     # Regional Configuration Sidebar
     with st.sidebar:
-        st.subheader("🌍 Regional Settings")
+        st.subheader("Regional Settings")
         
         # Auto-detect region
         detected_region = detect_region_from_data(df)
         
-        # Region selection with flags
+        # Region selection with region codes
         selected_region = st.selectbox(
             "Select Region",
             region_options,
             index=region_idx,
-            format_func=lambda x: f"{REGION_CONFIG[x]['flag']} {x}"
+            format_func=lambda x: f"[{REGION_CONFIG[x]['flag']}] {x}"
         )
         
         # Get region config
@@ -377,8 +377,8 @@ def display(df):
         else:
             scale_large_numbers = False
         
-        st.info(f"💡 Detected: {detected_region}")
-        st.info(f"🏛️ Countries: {', '.join(region_config['countries'][:3])}")
+        st.info(f"Detected: {detected_region}")
+        st.info(f"Countries: {', '.join(region_config['countries'][:3])}")
     
     # Data validation and cleaning
     required_columns = ['Vendor Name', 'Unit Price', 'Qty Delivered']
@@ -416,7 +416,7 @@ def display(df):
         return format_currency(value, selected_currency, decimals)
     
     # Vendor filtering
-    st.subheader("🏢 Vendor Filtering")
+    st.subheader("Vendor Filtering")
     all_vendors = sorted(df_clean['Vendor Name'].unique())
     selected_vendors = create_vendor_multiselect(all_vendors, "main")
     
@@ -439,10 +439,10 @@ def display(df):
         st.metric("Total Spend", format_amount(df_filtered['Line Total'].sum(), False))
     
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["🤖 ML Categorization", "🚨 Anomaly Detection", "📈 Anomaly Trends", "📋 Insights"])
+    tab1, tab2, tab3, tab4 = st.tabs(["ML Categorization", "Anomaly Detection", "Anomaly Trends", "Insights"])
     
     with tab1:
-        st.subheader(f"🤖 Machine Learning-Based Categorization {currency_suffix}")
+        st.subheader(f"Machine Learning-Based Categorization {currency_suffix}")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -450,20 +450,20 @@ def display(df):
         with col2:
             use_ml = st.checkbox("Use ML Clustering", value=True)
         
-        if st.button("🔄 Analyze & Categorize", type="primary"):
+        if st.button("Analyze & Categorize", type="primary"):
             with st.spinner("Running ML categorization..."):
                 
                 if use_ml:
                     # ML-based categorization
                     df_categorized, vectorizer, kmeans, category_names = ml_categorize_spending(df_filtered, n_clusters)
                     category_column = 'ML_Category'
-                    st.success("✅ ML categorization completed!")
+                    st.success("ML categorization completed!")
                 else:
                     # Rule-based categorization
                     df_categorized = df_filtered.copy()
                     df_categorized['ML_Category'] = df_categorized.apply(rule_based_categorize, axis=1)
                     category_column = 'ML_Category'
-                    st.success("✅ Rule-based categorization completed!")
+                    st.success("Rule-based categorization completed!")
                 
                 # Category analysis
                 category_summary = df_categorized.groupby(category_column).agg({
@@ -479,7 +479,7 @@ def display(df):
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.subheader("📊 Category Performance")
+                    st.subheader("Category Performance")
                     
                     # Format for display
                     category_display = category_summary.copy()
@@ -500,7 +500,7 @@ def display(df):
                     st.plotly_chart(fig, use_container_width=True)
                 
                 # Detailed category breakdown
-                st.subheader("🔍 Category Details")
+                st.subheader("Category Details")
                 
                 selected_category = st.selectbox(
                     "Select Category for Details",
@@ -536,7 +536,7 @@ def display(df):
                 st.session_state['categorized_data'] = df_categorized
     
     with tab2:
-        st.subheader(f"🚨 Regional Anomaly Detection {currency_suffix}")
+        st.subheader(f"Regional Anomaly Detection {currency_suffix}")
         
         # Anomaly detection parameters
         col1, col2, col3 = st.columns(3)
@@ -569,7 +569,7 @@ def display(df):
                 (df_filtered['Creation Date'].dt.date <= end_date)
             ]
         
-        if st.button("🔍 Detect Regional Anomalies", type="primary"):
+        if st.button("Detect Regional Anomalies", type="primary"):
             with st.spinner("Detecting anomalies within region..."):
                 
                 # Filter by minimum amount and region
@@ -610,7 +610,7 @@ def display(df):
                     
                     if total_anomalies > 0:
                         # Anomaly details
-                        st.subheader("🚨 Detected Anomalies")
+                        st.subheader("Detected Anomalies")
                         
                         anomaly_data = df_anomaly[df_anomaly['Is_Anomaly']].sort_values('Line Total', ascending=False)
                         
@@ -645,10 +645,10 @@ def display(df):
                         st.session_state['anomaly_data'] = df_anomaly
                     
                     else:
-                        st.success("✅ No significant anomalies detected with current settings.")
+                        st.success("No significant anomalies detected with current settings.")
     
     with tab3:
-        st.subheader("📈 Anomaly Trends Over Time")
+        st.subheader("Anomaly Trends Over Time")
         
         if 'anomaly_data' in st.session_state and 'Creation Date' in st.session_state['anomaly_data'].columns:
             anomaly_df = st.session_state['anomaly_data']
@@ -716,10 +716,10 @@ def display(df):
             st.info("No anomaly data available. Please run anomaly detection first.")
     
     with tab4:
-        st.subheader(f"📋 Regional Insights & Recommendations")
+        st.subheader(f"Regional Insights & Recommendations")
         
         # Regional summary
-        st.subheader(f"🌍 {selected_region} Summary")
+        st.subheader(f"{selected_region} Summary")
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -797,7 +797,7 @@ def display(df):
             st.write(f"• {rec}")
         
         # Action items
-        st.subheader("✅ Next Steps")
+        st.subheader("Next Steps")
         
         st.markdown(f"""
         **Immediate Actions (Week 1-2):**
@@ -817,12 +817,12 @@ def display(df):
         """)
         
         # Export functionality
-        st.subheader("📤 Export Data")
+        st.subheader("Export Data")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📊 Export Filtered Data"):
+            if st.button("Export Filtered Data"):
                 csv = df_filtered.to_csv(index=False)
                 st.download_button(
                     "Download Filtered CSV",
@@ -833,7 +833,7 @@ def display(df):
         
         with col2:
             if 'categorized_data' in st.session_state:
-                if st.button("🏷️ Export Categorized Data"):
+                if st.button("Export Categorized Data"):
                     csv = st.session_state['categorized_data'].to_csv(index=False)
                     st.download_button(
                         "Download Categorized CSV",
@@ -844,7 +844,7 @@ def display(df):
         
         with col3:
             if 'anomaly_data' in st.session_state:
-                if st.button("🚨 Export Anomaly Data"):
+                if st.button("Export Anomaly Data"):
                     csv = st.session_state['anomaly_data'].to_csv(index=False)
                     st.download_button(
                         "Download Anomaly CSV",
