@@ -1,384 +1,263 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
+import plotly.express as px
+import plotly.graph_objects as go
+from io import StringIO
 
-# Import all modules
-import contracting_opportunities
-import seasonal_price_optimization
-import spend_categorization_anomaly
+# Import your optimization module
 import lot_size_optimization
-import cross_region
-import duplicates
-import reorder_prediction
 
-# Page configuration
+# Configure the page
 st.set_page_config(
-    page_title="Procurement Analytics Platform",
-    page_icon="📊",
+    page_title="Procurement Insights Dashboard",
+    page_icon="🛒",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
+def load_sample_data():
+    """Generate sample procurement data"""
+    np.random.seed(42)
+    items = ['Widget-A', 'Component-B', 'Material-C', 'Part-D', 'Tool-E', 
+             'Supply-F', 'Equipment-G', 'Raw-Material-H', 'Assembly-I', 'Module-J']
+    
+    n_records = 200
+    data = {
+        'Item': np.random.choice(items, n_records),
+        'Unit Price': np.random.uniform(5, 100, n_records),
+        'Qty Delivered': np.random.randint(10, 500, n_records),
+        'Supplier': np.random.choice(['Supplier A', 'Supplier B', 'Supplier C', 'Supplier D'], n_records),
+        'Order Date': pd.date_range('2024-01-01', '2024-12-31', periods=n_records),
+        'Category': np.random.choice(['Electronics', 'Mechanical', 'Raw Materials', 'Tools'], n_records)
     }
-    .sidebar-header {
-        background-color: #f0f2f6;
-        padding: 0.5rem;
-        border-radius: 5px;
-        margin-bottom: 1rem;
-    }
-    .module-status {
-        background-color: #e8f5e8;
-        padding: 0.5rem;
-        border-radius: 5px;
-        margin: 0.5rem 0;
-        font-size: 0.9em;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-def clean_numeric_column(series, column_name):
-    """Clean numeric columns by removing non-numeric characters and converting to float"""
-    try:
-        series = series.astype(str)
-        series = series.str.replace('$', '', regex=False)
-        series = series.str.replace(',', '', regex=False)
-        series = series.str.replace('%', '', regex=False)
-        series = series.str.replace(' ', '', regex=False)
-        series = series.replace(['N/A', 'NA', 'n/a', 'na', 'NULL', 'null', '', 'TBD', 'tbd'], np.nan)
-        series = pd.to_numeric(series, errors='coerce')
-        
-        if 'qty' in column_name.lower() or 'quantity' in column_name.lower():
-            series = series.clip(lower=0)
-            
-        return series
-    except Exception as e:
-        st.warning(f"Warning cleaning {column_name}: {str(e)}")
-        return series
-
-def clean_date_column(series):
-    """Clean date columns"""
-    try:
-        return pd.to_datetime(series, errors='coerce', infer_datetime_format=True)
-    except Exception as e:
-        st.warning(f"Warning cleaning date column: {str(e)}")
-        return series
-
-def validate_and_clean_data(df):
-    """Comprehensive data validation and cleaning"""
-    
-    original_rows = len(df)
-    issues_found = []
-    df_clean = df.copy()
-    
-    # Clean column names
-    df_clean.columns = df_clean.columns.str.strip()
-    
-    # Column name mappings
-    column_mappings = {
-        'vendor': 'Vendor Name', 'vendor_name': 'Vendor Name', 'supplier': 'Vendor Name',
-        'item_id': 'Item', 'item_code': 'Item', 'product': 'Item',
-        'unit_price': 'Unit Price', 'price': 'Unit Price', 'cost': 'Unit Price',
-        'quantity': 'Qty Delivered', 'qty': 'Qty Delivered', 'amount': 'Qty Delivered',
-        'date': 'Creation Date', 'order_date': 'Creation Date', 'purchase_date': 'Creation Date',
-        'total': 'Line Total', 'line_total': 'Line Total'
-    }
-    
-    # Apply column mappings
-    for old_name, new_name in column_mappings.items():
-        for col in df_clean.columns:
-            if old_name.lower() in col.lower() and new_name not in df_clean.columns:
-                df_clean = df_clean.rename(columns={col: new_name})
-                break
-    
-    # Clean numeric columns
-    numeric_columns = ['Unit Price', 'Qty Delivered', 'Line Total', 'Qty Rejected']
-    for col in numeric_columns:
-        if col in df_clean.columns:
-            df_clean[col] = clean_numeric_column(df_clean[col], col)
-            null_count = df_clean[col].isnull().sum()
-            if null_count > 0:
-                issues_found.append(f"Found {null_count} invalid values in {col}")
-    
-    # Clean date columns
-    date_columns = ['Creation Date', 'Delivery Date', 'Order Date']
-    for col in date_columns:
-        if col in df_clean.columns:
-            df_clean[col] = clean_date_column(df_clean[col])
-    
-    # Calculate Line Total if missing
-    if 'Line Total' not in df_clean.columns and 'Unit Price' in df_clean.columns and 'Qty Delivered' in df_clean.columns:
-        df_clean['Line Total'] = df_clean['Unit Price'] * df_clean['Qty Delivered']
-    
-    # Remove rows with critical missing data
-    critical_columns = ['Vendor Name', 'Unit Price', 'Qty Delivered']
-    for col in critical_columns:
-        if col in df_clean.columns:
-            df_clean = df_clean.dropna(subset=[col])
-    
-    # Remove invalid values
-    if 'Unit Price' in df_clean.columns:
-        df_clean = df_clean[df_clean['Unit Price'] > 0]
-    if 'Qty Delivered' in df_clean.columns:
-        df_clean = df_clean[df_clean['Qty Delivered'] > 0]
-    
-    return df_clean, issues_found
-
-def check_required_columns(df):
-    """Check if the dataframe has minimum required columns"""
-    required_columns = ['Vendor Name', 'Unit Price', 'Qty Delivered']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    return len(missing_columns) == 0, missing_columns
+    return pd.DataFrame(data)
 
 def main():
-    # Main header - OUTSIDE sidebar
-    st.markdown("""
-    <div class="main-header">
-        <h1>📊 Procurement Analytics Platform</h1>
-        <p>Advanced AI-Powered Procurement Intelligence & Optimization</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Header
+    st.title("🛒 Procurement Insights Dashboard")
+    st.markdown("**Optimize your procurement strategies with data-driven insights**")
     
-    # Initialize session state
-    if 'df' not in st.session_state:
-        st.session_state.df = None
-    if 'selected_module' not in st.session_state:
-        st.session_state.selected_module = "📋 Data Overview"
-    
-    # SIDEBAR - Only for file upload and module selection
+    # Sidebar Navigation
     with st.sidebar:
-        st.markdown("""
-        <div class="sidebar-header">
-            <h3>📁 Data Upload</h3>
-        </div>
-        """, unsafe_allow_html=True)
+        st.header("📋 Navigation")
         
-        uploaded_file = st.file_uploader(
-            "Upload Procurement Data", 
-            type=['csv', 'xlsx', 'xls'],
-            help="Upload your procurement data file (CSV or Excel format)"
+        # Data source selection
+        st.subheader("📁 Data Source")
+        data_source = st.radio(
+            "Choose data source:",
+            ["Sample Data", "Upload CSV File"]
         )
         
-        # File processing
-        if uploaded_file is not None:
-            try:
-                # Load data
-                if uploaded_file.name.endswith('.csv'):
-                    df_raw = pd.read_csv(uploaded_file, encoding='utf-8')
+        # Load data based on selection
+        if data_source == "Sample Data":
+            df = load_sample_data()
+            st.success(f"✅ Loaded {len(df)} sample records")
+            
+        else:  # Upload CSV
+            uploaded_file = st.file_uploader(
+                "Upload your procurement data (CSV)",
+                type=['csv'],
+                help="CSV should contain columns: Item, Unit Price, Qty Delivered"
+            )
+            
+            if uploaded_file is not None:
+                try:
+                    df = pd.read_csv(uploaded_file)
+                    st.success(f"✅ Loaded {len(df)} records from file")
+                    
+                    # Show column info
+                    st.write("**Columns found:**")
+                    st.write(list(df.columns))
+                    
+                except Exception as e:
+                    st.error(f"Error loading file: {str(e)}")
+                    df = load_sample_data()
+                    st.info("Using sample data instead")
+            else:
+                df = load_sample_data()
+                st.info("Using sample data (upload a file to use your own data)")
+        
+        # Page selection
+        st.subheader("🎯 Analysis Modules")
+        page = st.selectbox(
+            "Choose analysis:",
+            [
+                "📦 LOT Size Optimization",
+                "🏭 Supplier Analysis", 
+                "💰 Cost Analysis",
+                "📈 Performance Dashboard",
+                "📊 Data Overview"
+            ]
+        )
+    
+    # Main content area
+    if page == "📦 LOT Size Optimization":
+        # Use your existing optimization module
+        lot_size_optimization.display(df)
+        
+    elif page == "📊 Data Overview":
+        st.header("📊 Data Overview")
+        
+        if df is not None and len(df) > 0:
+            # Basic statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Records", len(df))
+            with col2:
+                st.metric("Unique Items", df['Item'].nunique() if 'Item' in df.columns else 0)
+            with col3:
+                if 'Unit Price' in df.columns:
+                    avg_price = df['Unit Price'].mean()
+                    st.metric("Avg Unit Price", f"${avg_price:.2f}")
                 else:
-                    df_raw = pd.read_excel(uploaded_file)
-                
-                st.success(f"✅ Loaded: {uploaded_file.name}")
-                st.info(f"📊 {len(df_raw):,} records")
-                
-                # Clean and validate data
-                df_clean, issues = validate_and_clean_data(df_raw)
-                
-                # Check required columns
-                has_required, missing = check_required_columns(df_clean)
-                
-                if has_required and len(df_clean) > 0:
-                    st.session_state.df = df_clean
-                    
-                    st.markdown("""
-                    <div class="module-status">
-                        ✅ Data Ready for Analysis
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Module selection
-                    st.markdown("### 🔧 Analytics Modules")
-                    
-                    modules = {
-                        "📋 Data Overview": "overview",
-                        "🤝 Contracting Opportunities": "contracting",
-                        "🌟 Seasonal Price Optimization": "seasonal",
-                        "📊 Spend Categorization & Anomaly": "spend_anomaly",
-                        "📦 LOT Size Optimization": "lot_size",
-                        "🌍 Cross-Region Analysis": "cross_region",
-                        "🔍 Duplicate Detection": "duplicates",
-                        "📈 Reorder Prediction": "reorder"
-                    }
-                    
-                    st.session_state.selected_module = st.selectbox(
-                        "Select Module",
-                        list(modules.keys()),
-                        index=list(modules.keys()).index(st.session_state.selected_module) 
-                        if st.session_state.selected_module in modules.keys() else 0,
-                        key="module_selector"
-                    )
-                    
-                    st.markdown(f"""
-                    <div class="module-status">
-                        📊 Available Modules: 7/7<br>
-                        🎯 Selected: {st.session_state.selected_module.split(' ', 1)[1]}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                    st.metric("Avg Unit Price", "N/A")
+            with col4:
+                if 'Qty Delivered' in df.columns:
+                    total_qty = df['Qty Delivered'].sum()
+                    st.metric("Total Quantity", f"{total_qty:,.0f}")
                 else:
-                    st.error("❌ Data validation failed")
-                    if missing:
-                        st.error(f"Missing: {', '.join(missing)}")
-                    
-            except Exception as e:
-                st.error(f"❌ Error loading file: {str(e)}")
-        
+                    st.metric("Total Quantity", "N/A")
+            
+            # Data preview
+            st.subheader("📋 Data Preview")
+            st.dataframe(df.head(20), use_container_width=True)
+            
+            # Data quality check
+            st.subheader("🔍 Data Quality")
+            missing_data = df.isnull().sum()
+            if missing_data.sum() > 0:
+                st.warning("Missing data found:")
+                st.write(missing_data[missing_data > 0])
+            else:
+                st.success("✅ No missing data found")
+            
+            # Basic visualizations
+            if 'Item' in df.columns and 'Qty Delivered' in df.columns:
+                st.subheader("📊 Quick Insights")
+                
+                # Top items by quantity
+                top_items = df.groupby('Item')['Qty Delivered'].sum().sort_values(ascending=False).head(10)
+                fig1 = px.bar(x=top_items.values, y=top_items.index, orientation='h',
+                             title="Top 10 Items by Total Quantity")
+                st.plotly_chart(fig1, use_container_width=True)
+                
+                # Price distribution
+                if 'Unit Price' in df.columns:
+                    fig2 = px.histogram(df, x='Unit Price', title="Unit Price Distribution", 
+                                       nbins=30)
+                    st.plotly_chart(fig2, use_container_width=True)
         else:
-            st.info("👆 Upload a file to begin")
+            st.warning("No data available for analysis")
     
-    # MAIN CONTENT AREA - Display selected module content
-    if st.session_state.df is not None:
-        df = st.session_state.df
-        selected_module = st.session_state.selected_module
+    elif page == "🏭 Supplier Analysis":
+        st.header("🏭 Supplier Performance Analysis")
         
-        # Map selection to module
-        modules = {
-            "📋 Data Overview": "overview",
-            "🤝 Contracting Opportunities": "contracting",
-            "🌟 Seasonal Price Optimization": "seasonal",
-            "📊 Spend Categorization & Anomaly": "spend_anomaly",
-            "📦 LOT Size Optimization": "lot_size",
-            "🌍 Cross-Region Analysis": "cross_region",
-            "🔍 Duplicate Detection": "duplicates",
-            "📈 Reorder Prediction": "reorder"
-        }
-        
-        # Display the selected module in MAIN AREA
-        try:
-            if selected_module == "📋 Data Overview":
-                show_data_overview(df)
-            elif modules[selected_module] == "contracting":
-                contracting_opportunities.display(df)
-            elif modules[selected_module] == "seasonal":
-                seasonal_price_optimization.display(df)
-            elif modules[selected_module] == "spend_anomaly":
-                spend_categorization_anomaly.display(df)
-            elif modules[selected_module] == "lot_size":
-                lot_size_optimization.display(df)
-            elif modules[selected_module] == "cross_region":
-                cross_region.display(df)
-            elif modules[selected_module] == "duplicates":
-                duplicates.display(df)
-            elif modules[selected_module] == "reorder":
-                reorder_prediction.display(df)
-        except Exception as e:
-            st.error(f"❌ Error in {selected_module}: {str(e)}")
-            st.info("This might be due to missing columns or data format issues.")
-    
-    else:
-        # Welcome screen in MAIN AREA when no data is loaded
-        show_welcome_screen()
-
-def show_data_overview(df):
-    """Display data overview and basic statistics in MAIN area"""
-    st.header("📋 Data Overview")
-    
-    # Basic statistics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Records", f"{len(df):,}")
-    with col2:
-        unique_vendors = df['Vendor Name'].nunique() if 'Vendor Name' in df.columns else 0
-        st.metric("Unique Vendors", f"{unique_vendors:,}")
-    with col3:
-        unique_items = df['Item'].nunique() if 'Item' in df.columns else 0
-        st.metric("Unique Items", f"{unique_items:,}")
-    with col4:
-        if 'Line Total' in df.columns:
-            total_spend = df['Line Total'].sum()
-        elif 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
-            total_spend = (df['Unit Price'] * df['Qty Delivered']).sum()
+        if 'Supplier' in df.columns:
+            # Supplier metrics
+            supplier_stats = df.groupby('Supplier').agg({
+                'Qty Delivered': ['sum', 'count'],
+                'Unit Price': 'mean'
+            }).round(2)
+            
+            supplier_stats.columns = ['Total Quantity', 'Order Count', 'Avg Unit Price']
+            supplier_stats = supplier_stats.sort_values('Total Quantity', ascending=False)
+            
+            # Display supplier rankings
+            st.subheader("📊 Supplier Rankings")
+            st.dataframe(supplier_stats, use_container_width=True)
+            
+            # Supplier comparison chart
+            fig = px.bar(x=supplier_stats.index, y=supplier_stats['Total Quantity'],
+                        title="Total Quantity by Supplier")
+            st.plotly_chart(fig, use_container_width=True)
+            
         else:
-            total_spend = 0
-        st.metric("Total Spend", f"${total_spend:,.0f}")
+            st.info("No supplier data available in the dataset")
     
-    # Data quality summary
-    st.subheader("📊 Data Quality Summary")
+    elif page == "💰 Cost Analysis":
+        st.header("💰 Cost Analysis")
+        
+        if 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
+            # Calculate total costs
+            df['Total Cost'] = df['Unit Price'] * df['Qty Delivered']
+            
+            # Cost metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_cost = df['Total Cost'].sum()
+                st.metric("Total Procurement Cost", f"${total_cost:,.2f}")
+            with col2:
+                avg_order_cost = df['Total Cost'].mean()
+                st.metric("Average Order Cost", f"${avg_order_cost:.2f}")
+            with col3:
+                median_order_cost = df['Total Cost'].median()
+                st.metric("Median Order Cost", f"${median_order_cost:.2f}")
+            
+            # Cost by category/item
+            if 'Category' in df.columns:
+                category_costs = df.groupby('Category')['Total Cost'].sum().sort_values(ascending=False)
+                fig = px.pie(values=category_costs.values, names=category_costs.index,
+                           title="Cost Distribution by Category")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Top cost items
+            item_costs = df.groupby('Item')['Total Cost'].sum().sort_values(ascending=False).head(10)
+            fig2 = px.bar(x=item_costs.values, y=item_costs.index, orientation='h',
+                         title="Top 10 Items by Total Cost")
+            st.plotly_chart(fig2, use_container_width=True)
+            
+        else:
+            st.info("Unit Price and Qty Delivered columns required for cost analysis")
     
-    quality_info = []
-    for col in df.columns:
-        quality_info.append({
-            'Column': col,
-            'Data Type': str(df[col].dtype),
-            'Non-Null Count': f"{df[col].count():,}",
-            'Null Count': f"{df[col].isnull().sum():,}",
-            'Unique Values': f"{df[col].nunique():,}",
-            'Completeness': f"{(df[col].count() / len(df) * 100):.1f}%"
-        })
-    
-    quality_df = pd.DataFrame(quality_info)
-    st.dataframe(quality_df, use_container_width=True)
-    
-    # Data sample
-    st.subheader("📋 Data Sample")
-    st.dataframe(df.head(10), use_container_width=True)
+    elif page == "📈 Performance Dashboard":
+        st.header("📈 Performance Dashboard")
+        
+        # KPI Overview
+        st.subheader("🎯 Key Performance Indicators")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if 'Item' in df.columns:
+                item_variety = df['Item'].nunique()
+                st.metric("Item Variety", item_variety)
+            
+        with col2:
+            if 'Supplier' in df.columns:
+                supplier_count = df['Supplier'].nunique()
+                st.metric("Active Suppliers", supplier_count)
+            
+        with col3:
+            if 'Order Date' in df.columns:
+                order_frequency = len(df) / 365  # assuming 1 year of data
+                st.metric("Orders per Day", f"{order_frequency:.1f}")
+            
+        with col4:
+            if 'Unit Price' in df.columns and 'Qty Delivered' in df.columns:
+                df['Total Cost'] = df['Unit Price'] * df['Qty Delivered']
+                avg_order_value = df['Total Cost'].mean()
+                st.metric("Avg Order Value", f"${avg_order_value:.2f}")
+        
+        # Performance trends (if date data available)
+        if 'Order Date' in df.columns:
+            st.subheader("📊 Trends Over Time")
+            
+            # Convert to datetime if not already
+            df['Order Date'] = pd.to_datetime(df['Order Date'])
+            
+            # Monthly trends
+            monthly_orders = df.groupby(df['Order Date'].dt.to_period('M')).size()
+            
+            fig = px.line(x=monthly_orders.index.astype(str), y=monthly_orders.values,
+                         title="Orders per Month")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Date information needed for trend analysis")
 
-def show_welcome_screen():
-    """Show welcome screen in MAIN area"""
-    st.header("🚀 Welcome to Procurement Analytics Platform")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        ## 📋 File Format Requirements:
-        
-        **Required Columns:**
-        - **Vendor Name** (text): Supplier/vendor name
-        - **Unit Price** (number): Price per unit (no $ symbols)
-        - **Qty Delivered** (number): Quantity delivered
-        
-        **Optional Columns:**
-        - **Item** (text/number): Item ID or name
-        - **Creation Date** (date): Order date
-        - **Line Total** (number): Total amount
-        - **Item Description** (text): Item description
-        
-        ## ⚠️ Common Issues to Avoid:
-        - $ symbols in price columns
-        - Commas in numbers (1,000)
-        - Text in numeric columns ("N/A", "TBD")
-        - Inconsistent date formats
-        """)
-    
-    with col2:
-        st.markdown("""
-        ## 📊 Available Analytics Modules:
-        
-        ### 🤝 **Contracting Opportunities**
-        Identify optimal contracting opportunities based on spend analysis.
-        
-        ### 🌟 **Seasonal Price Optimization**
-        Analyze seasonal price patterns to optimize purchase timing.
-        
-        ### 📊 **Spend Categorization & Anomaly Detection**
-        AI-powered spend categorization and anomaly detection.
-        
-        ### 📦 **LOT Size Optimization**
-        Economic Order Quantity (EOQ) analysis for inventory optimization.
-        
-        ### 🌍 **Cross-Region Analysis**
-        Compare pricing and performance across different regions.
-        
-        ### 🔍 **Duplicate Detection**
-        Identify potential duplicate vendors and items.
-        
-        ### 📈 **Reorder Prediction**
-        Smart reorder point calculation and demand forecasting.
-        """)
-    
-    st.info("👈 Upload your procurement data file in the sidebar to start analyzing!")
+    # Footer
+    st.markdown("---")
+    st.markdown("**Procurement Insights Dashboard** | Built with ❤️ using Streamlit")
 
 if __name__ == "__main__":
     main()
