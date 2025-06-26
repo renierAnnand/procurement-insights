@@ -26,6 +26,15 @@ def load_and_clean_data(uploaded_file):
         
         # Data cleaning and transformation
         if not df.empty:
+            # Convert numeric columns to numeric, replacing errors with NaN
+            numeric_columns = ['Line Total', 'Qty Delivered']
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Fill NaN values with 0 for numeric columns
+            df[numeric_columns] = df[numeric_columns].fillna(0)
+            
             # Calculate actual unit price from Line Total / Qty Delivered
             df['Actual_Unit_Price'] = np.where(
                 (df['Qty Delivered'] > 0) & (df['Line Total'] > 0),
@@ -45,6 +54,8 @@ def load_and_clean_data(uploaded_file):
             
             # Clean any missing or invalid data
             df = df.dropna(subset=['Vendor Name', 'Item'])
+            
+            # Filter out invalid numeric data (now that columns are properly numeric)
             df = df[df['Line Total'] > 0]
             df = df[df['Qty Delivered'] > 0]
             
@@ -61,6 +72,7 @@ def load_and_clean_data(uploaded_file):
             
     except Exception as e:
         st.error(f"Error loading file: {str(e)}")
+        st.error("Please check that your file contains the required columns and numeric data is properly formatted.")
         return None
 
 def main():
