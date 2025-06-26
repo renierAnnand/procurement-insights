@@ -45,6 +45,11 @@ def load_and_clean_data(uploaded_file):
             # Use Ordered Date as Creation Date (since Creation Date is corrupted)
             if 'Ordered Date' in df.columns:
                 df['Creation Date'] = pd.to_datetime(df['Ordered Date'], errors='coerce')
+            elif 'Creation Date' in df.columns:
+                df['Creation Date'] = pd.to_datetime(df['Creation Date'], errors='coerce')
+            else:
+                # If no date columns available, create a placeholder
+                df['Creation Date'] = pd.NaT
             
             # Set currency to SAR (since Unit Price column contains currency codes)
             df['Currency_Clean'] = 'SAR'
@@ -102,7 +107,20 @@ def main():
             # Data overview
             st.sidebar.success(f"✅ Data loaded successfully!")
             st.sidebar.metric("Total Records", len(df))
-            st.sidebar.metric("Date Range", f"{df['Creation Date'].min().date()} to {df['Creation Date'].max().date()}")
+            
+            # Safe date range display
+            try:
+                if 'Creation Date' in df.columns and not df['Creation Date'].isna().all():
+                    min_date = df['Creation Date'].min()
+                    max_date = df['Creation Date'].max()
+                    if pd.notna(min_date) and pd.notna(max_date):
+                        st.sidebar.metric("Date Range", f"{min_date.date()} to {max_date.date()}")
+                    else:
+                        st.sidebar.info("Date range not available")
+                else:
+                    st.sidebar.info("Date information not available")
+            except Exception:
+                st.sidebar.info("Date range not available")
             
             # Module selection
             st.sidebar.header("🔧 Analysis Modules")
