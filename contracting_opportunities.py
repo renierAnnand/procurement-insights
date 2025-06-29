@@ -11,46 +11,43 @@ def calculate_vendor_performance_score(vendor_data):
     metrics = {}
     
     # Volume consistency (coefficient of variation of monthly orders)
-    vendor_data['Order_Month'] = vendor_data['Creation Date'].dt.to_period('M')
-    monthly_orders = vendor_data.groupby('Order_Month').size()
+    monthly_orders = vendor_data.groupby(vendor_data['Creation Date'].dt.to_period('M')).size()
     if len(monthly_orders) > 1:
         metrics['volume_consistency'] = 1 - (monthly_orders.std() / monthly_orders.mean()) if monthly_orders.mean() > 0 else 0
     else:
         metrics['volume_consistency'] = 0
     
     # Price stability (1 - coefficient of variation of unit prices)
-    if len(vendor_data['Unit Price']) > 1:
+    if 'Unit Price' in vendor_data.columns:
         price_cv = vendor_data['Unit Price'].std() / vendor_data['Unit Price'].mean() if vendor_data['Unit Price'].mean() > 0 else 0
         metrics['price_stability'] = max(0, 1 - price_cv)
     else:
-        metrics['price_stability'] = 0.5
+        metrics['price_stability'] = 0
     
-    # Lead time consistency (using difference between ordered and delivered dates)
-    if 'Delivered date' in vendor_data.columns and 'Ordered Date' in vendor_data.columns:
-        vendor_data['lead_time_days'] = (vendor_data['Delivered date'] - vendor_data['Ordered Date']).dt.days
-        lead_times = vendor_data['lead_time_days'].dropna()
-        if len(lead_times) > 1:
-            lt_cv = lead_times.std() / lead_times.mean() if lead_times.mean() > 0 else 0
-            metrics['lead_time_consistency'] = max(0, 1 - lt_cv)
-        else:
-            metrics['lead_time_consistency'] = 0.5
-    else:
-        metrics['lead_time_consistency'] = 0.5
-    
-    # Delivery performance (on-time delivery)
+    # Lead time consistency (if available)
     if 'lead_time_days' in vendor_data.columns:
         lead_times = vendor_data['lead_time_days'].dropna()
         if len(lead_times) > 0:
-            # Consider on-time if delivered within 30 days
-            on_time_rate = len(lead_times[lead_times <= 30]) / len(lead_times)
+            lt_cv = lead_times.std() / lead_times.mean() if lead_times.mean() > 0 else 0
+            metrics['lead_time_consistency'] = max(0, 1 - lt_cv)
+        else:
+            metrics['lead_time_consistency'] = 0.5  # Default neutral score
+    else:
+        metrics['lead_time_consistency'] = 0.5
+    
+    # Delivery performance (if available)
+    if 'delivery_delay_days' in vendor_data.columns:
+        delays = vendor_data['delivery_delay_days'].dropna()
+        if len(delays) > 0:
+            on_time_rate = len(delays[delays <= 0]) / len(delays)
             metrics['delivery_performance'] = on_time_rate
         else:
             metrics['delivery_performance'] = 0.5
     else:
         metrics['delivery_performance'] = 0.5
     
-    # Quality score (based on rejection rates)
-    if 'Qty Rejected' in vendor_data.columns:
+    # Quality score (based on rejection rates if available)
+    if 'Qty Rejected' in vendor_data.columns and 'Qty Delivered' in vendor_data.columns:
         total_delivered = vendor_data['Qty Delivered'].sum()
         total_rejected = vendor_data['Qty Rejected'].sum()
         if total_delivered > 0:
@@ -81,7 +78,7 @@ def analyze_contract_suitability(item_vendor_data, min_spend_threshold=10000, mi
     """Analyze suitability for contracting based on spend and frequency"""
     
     # Calculate key metrics
-    total_spend = item_vendor_data['Line Total'].sum()
+    total_spend = (item_vendor_data['Unit Price'] * item_vendor_data['Qty Delivered']).sum()
     order_frequency = len(item_vendor_data)
     
     # Calculate time span
@@ -91,11 +88,8 @@ def analyze_contract_suitability(item_vendor_data, min_spend_threshold=10000, mi
     
     # Demand predictability
     monthly_demand = item_vendor_data.groupby(item_vendor_data['Creation Date'].dt.to_period('M'))['Qty Delivered'].sum()
-    if len(monthly_demand) > 1:
-        demand_cv = monthly_demand.std() / monthly_demand.mean() if monthly_demand.mean() > 0 else 1
-        demand_predictability = max(0, 1 - demand_cv)
-    else:
-        demand_predictability = 0.3
+    demand_cv = monthly_demand.std() / monthly_demand.mean() if len(monthly_demand) > 1 and monthly_demand.mean() > 0 else 1
+    demand_predictability = max(0, 1 - demand_cv)
     
     # Contract suitability score
     spend_score = min(total_spend / min_spend_threshold, 1.0) if min_spend_threshold > 0 else 1.0
@@ -156,7 +150,7 @@ def calculate_contract_savings_potential(historical_data, contract_terms):
             'price_savings': price_savings,
             'admin_savings': total_admin_savings,
             'total_savings': total_savings,
-            'savings_percent': (total_savings / (current_avg_price * annual_volume)) * 100 if current_avg_price * annual_volume > 0 else 0
+            'savings_percent': (total_savings / (current_avg_price * annual_volume)) * 100
         })
     
     return savings_scenarios
@@ -166,7 +160,7 @@ def display(df):
     st.markdown("Identify optimal contracting opportunities based on spend analysis, vendor performance, and demand predictability.")
     
     # Data validation
-    required_columns = ['Vendor Name', 'Item', 'Line Total', 'Qty Delivered', 'Creation Date']
+    required_columns = ['Vendor Name', 'Item', 'Unit Price', 'Qty Delivered', 'Creation Date']
     missing_columns = [col for col in required_columns if col not in df.columns]
     
     if missing_columns:
@@ -175,13 +169,10 @@ def display(df):
     
     # Clean data
     df_clean = df.dropna(subset=required_columns)
-    df_clean = df_clean[df_clean['Line Total'] > 0]
+    df_clean = df_clean[df_clean['Unit Price'] > 0]
     df_clean = df_clean[df_clean['Qty Delivered'] > 0]
     df_clean['Creation Date'] = pd.to_datetime(df_clean['Creation Date'], errors='coerce')
     df_clean = df_clean.dropna(subset=['Creation Date'])
-    
-    # Calculate unit price from line total and quantity
-    df_clean['Unit Price'] = df_clean['Line Total'] / df_clean['Qty Delivered']
     
     if len(df_clean) == 0:
         st.warning("No valid data found after cleaning.")
@@ -196,7 +187,7 @@ def display(df):
         # Configuration parameters
         col1, col2, col3 = st.columns(3)
         with col1:
-            min_spend = st.number_input("Min Annual Spend Threshold (SAR)", min_value=0, value=50000, step=10000)
+            min_spend = st.number_input("Min Annual Spend Threshold", min_value=0, value=50000, step=10000)
         with col2:
             min_frequency = st.number_input("Min Annual Order Frequency", min_value=1, value=6, step=1)
         with col3:
@@ -213,41 +204,36 @@ def display(df):
             analysis_df = df_clean
         
         if st.button("🔍 Identify Contract Opportunities", type="primary"):
-            try:
-                with st.spinner("Analyzing contract opportunities..."):
-                    contract_opportunities = []
+            with st.spinner("Analyzing contract opportunities..."):
+                contract_opportunities = []
+                
+                # Analyze vendor-item combinations
+                vendor_item_combinations = analysis_df.groupby(['Vendor Name', 'Item'])
+                
+                for (vendor, item), group_data in vendor_item_combinations:
+                    suitability_analysis = analyze_contract_suitability(
+                        group_data, min_spend, min_frequency
+                    )
                     
-                    # Analyze vendor-item combinations
-                    vendor_item_combinations = analysis_df.groupby(['Vendor Name', 'Item'])
-                    
-                    for (vendor, item), group_data in vendor_item_combinations:
-                        try:
-                            suitability_analysis = analyze_contract_suitability(
-                                group_data, min_spend, min_frequency
-                            )
-                            
-                            if suitability_analysis['recommendation'] != "Not Suitable":
-                                vendor_performance = calculate_vendor_performance_score(group_data)
-                                
-                                item_desc = group_data['Item Description'].iloc[0] if 'Item Description' in group_data.columns else f"Item {item}"
-                                
-                                contract_opportunities.append({
-                                    'Vendor Name': vendor,
-                                    'Item': item,
-                                    'Item Description': item_desc[:50] + "..." if len(str(item_desc)) > 50 else str(item_desc),
-                                    'Annual Spend': suitability_analysis['total_spend'],
-                                    'Order Frequency': suitability_analysis['order_frequency'],
-                                    'Monthly Frequency': suitability_analysis['monthly_frequency'],
-                                    'Demand Predictability': suitability_analysis['demand_predictability'],
-                                    'Vendor Performance': vendor_performance['overall_score'],
-                                    'Suitability Score': suitability_analysis['suitability_score'],
-                                    'Contract Priority': suitability_analysis['recommendation'],
-                                    'Avg Unit Price': group_data['Unit Price'].mean(),
-                                    'Price Stability': vendor_performance['price_stability']
-                                })
-                        except Exception as e:
-                            st.warning(f"Could not analyze {vendor} - {item}: {str(e)}")
-                            continue
+                    if suitability_analysis['recommendation'] != "Not Suitable":
+                        vendor_performance = calculate_vendor_performance_score(group_data)
+                        
+                        item_desc = group_data['Item Description'].iloc[0] if 'Item Description' in group_data.columns else f"Item {item}"
+                        
+                        contract_opportunities.append({
+                            'Vendor Name': vendor,
+                            'Item': item,
+                            'Item Description': item_desc[:50] + "..." if len(item_desc) > 50 else item_desc,
+                            'Annual Spend': suitability_analysis['total_spend'],
+                            'Order Frequency': suitability_analysis['order_frequency'],
+                            'Monthly Frequency': suitability_analysis['monthly_frequency'],
+                            'Demand Predictability': suitability_analysis['demand_predictability'],
+                            'Vendor Performance': vendor_performance['overall_score'],
+                            'Suitability Score': suitability_analysis['suitability_score'],
+                            'Contract Priority': suitability_analysis['recommendation'],
+                            'Avg Unit Price': group_data['Unit Price'].mean(),
+                            'Price Stability': vendor_performance['price_stability']
+                        })
                 
                 if contract_opportunities:
                     opportunities_df = pd.DataFrame(contract_opportunities)
@@ -264,7 +250,7 @@ def display(df):
                     with col2:
                         st.metric("High Priority Items", high_priority_count)
                     with col3:
-                        st.metric("Total Contract Spend", f"SAR {total_contract_spend:,.0f}")
+                        st.metric("Total Contract Spend", f"{total_contract_spend:,.0f}")
                     with col4:
                         st.metric("Avg Suitability Score", f"{avg_suitability:.2f}")
                     
@@ -312,12 +298,12 @@ def display(df):
                     
                     st.dataframe(
                         opportunities_df.style.format({
-                            'Annual Spend': 'SAR {:,.0f}',
+                            'Annual Spend': '{:,.0f}',
                             'Monthly Frequency': '{:.1f}',
                             'Demand Predictability': '{:.2f}',
                             'Vendor Performance': '{:.2f}',
                             'Suitability Score': '{:.2f}',
-                            'Avg Unit Price': 'SAR {:.2f}',
+                            'Avg Unit Price': '{:.2f}',
                             'Price Stability': '{:.2f}'
                         }),
                         use_container_width=True
@@ -361,24 +347,16 @@ def display(df):
                 
                 else:
                     st.info("No contract opportunities found with the current criteria.")
-                    
-            except Exception as e:
-                st.error(f"Error during analysis: {str(e)}")
-                st.info("Please check your data and try adjusting the parameters.")
     
     with tab2:
         st.subheader("📊 Vendor Performance Analysis")
         
         # Vendor selection
         vendor_options = sorted(df_clean["Vendor Name"].dropna().unique())
-        
-        # Set safe defaults - only use first 5 vendors if they exist
-        safe_defaults = vendor_options[:min(5, len(vendor_options))] if len(vendor_options) > 0 else []
-        
         selected_vendors = st.multiselect(
             "Select Vendors for Performance Analysis",
             options=vendor_options,
-            default=safe_defaults,
+            default=vendor_options[:5] if len(vendor_options) >= 5 else vendor_options,
             key="performance_vendors"
         )
         
@@ -390,7 +368,7 @@ def display(df):
                 performance_metrics = calculate_vendor_performance_score(vendor_data)
                 
                 # Additional metrics
-                total_spend = vendor_data['Line Total'].sum()
+                total_spend = (vendor_data['Unit Price'] * vendor_data['Qty Delivered']).sum()
                 unique_items = vendor_data['Item'].nunique()
                 avg_order_size = vendor_data['Qty Delivered'].mean()
                 order_frequency = len(vendor_data)
@@ -436,7 +414,7 @@ def display(df):
                     'Lead Time Consistency': '{:.2f}',
                     'Delivery Performance': '{:.2f}',
                     'Quality Score': '{:.2f}',
-                    'Total Spend': 'SAR {:,.0f}',
+                    'Total Spend': '{:,.0f}',
                     'Avg Order Size': '{:.1f}'
                 }),
                 use_container_width=True
@@ -498,7 +476,7 @@ def display(df):
                 color='Overall Score',
                 hover_name='Vendor Name',
                 title="Vendor Performance vs Total Spend",
-                labels={'Overall Score': 'Performance Score', 'Total Spend': 'Total Annual Spend (SAR)'},
+                labels={'Overall Score': 'Performance Score', 'Total Spend': 'Total Annual Spend'},
                 color_continuous_scale='Viridis'
             )
             fig.update_layout(height=500)
@@ -526,7 +504,7 @@ def display(df):
             if selected_opportunity:
                 # Parse selection
                 vendor_name = selected_opportunity.split(' - Item ')[0]
-                item_id = selected_opportunity.split(' - Item ')[1]
+                item_id = int(selected_opportunity.split(' - Item ')[1])
                 
                 # Get historical data
                 historical_data = df_clean[
@@ -542,13 +520,13 @@ def display(df):
                 with col1:
                     st.write("**Contract Scenario 1: Short-term**")
                     short_discount = st.slider("Volume Discount (%)", 0, 20, 3, key="short_discount") / 100
-                    short_admin_savings = st.number_input("Admin Savings per Order (SAR)", 0, 500, 100, key="short_admin")
+                    short_admin_savings = st.number_input("Admin Savings per Order", 0, 200, 25, key="short_admin")
                     short_orders_per_year = st.number_input("Contract Orders/Year", 1, 52, 12, key="short_orders")
                 
                 with col2:
                     st.write("**Contract Scenario 2: Long-term**")
                     long_discount = st.slider("Volume Discount (%)", 0, 30, 8, key="long_discount") / 100
-                    long_admin_savings = st.number_input("Admin Savings per Order (SAR)", 0, 500, 200, key="long_admin")
+                    long_admin_savings = st.number_input("Admin Savings per Order", 0, 200, 50, key="long_admin")
                     long_orders_per_year = st.number_input("Contract Orders/Year", 1, 24, 6, key="long_orders")
                 
                 # Define contract terms
@@ -584,24 +562,24 @@ def display(df):
                 
                 short_term_savings = savings_df[savings_df['contract_term'] == 'Short-term Contract']['total_savings'].iloc[0]
                 long_term_savings = savings_df[savings_df['contract_term'] == 'Long-term Contract']['total_savings'].iloc[0]
-                current_annual_cost = historical_data['Line Total'].sum() / ((historical_data['Creation Date'].max() - historical_data['Creation Date'].min()).days / 365)
+                current_annual_cost = (historical_data['Unit Price'] * historical_data['Qty Delivered']).sum() / ((historical_data['Creation Date'].max() - historical_data['Creation Date'].min()).days / 365)
                 
                 with col1:
-                    st.metric("Current Annual Cost", f"SAR {current_annual_cost:,.0f}")
+                    st.metric("Current Annual Cost", f"{current_annual_cost:,.0f}")
                 with col2:
                     short_percent = (short_term_savings / current_annual_cost) * 100 if current_annual_cost > 0 else 0
-                    st.metric("Short-term Savings", f"SAR {short_term_savings:,.0f}", f"{short_percent:.1f}%")
+                    st.metric("Short-term Savings", f"{short_term_savings:,.0f}", f"{short_percent:.1f}%")
                 with col3:
                     long_percent = (long_term_savings / current_annual_cost) * 100 if current_annual_cost > 0 else 0
-                    st.metric("Long-term Savings", f"SAR {long_term_savings:,.0f}", f"{long_percent:.1f}%")
+                    st.metric("Long-term Savings", f"{long_term_savings:,.0f}", f"{long_percent:.1f}%")
                 
                 # Detailed savings breakdown
                 st.dataframe(
                     savings_df.style.format({
-                        'contract_price': 'SAR {:.2f}',
-                        'price_savings': 'SAR {:,.0f}',
-                        'admin_savings': 'SAR {:,.0f}',
-                        'total_savings': 'SAR {:,.0f}',
+                        'contract_price': '{:.2f}',
+                        'price_savings': '{:,.0f}',
+                        'admin_savings': '{:,.0f}',
+                        'total_savings': '{:,.0f}',
                         'savings_percent': '{:.1f}%'
                     }),
                     use_container_width=True
@@ -623,7 +601,7 @@ def display(df):
                 fig.update_layout(
                     title="Savings Breakdown by Contract Type",
                     xaxis_title="Savings Category",
-                    yaxis_title="Annual Savings (SAR)",
+                    yaxis_title="Annual Savings",
                     barmode='group',
                     height=400
                 )
@@ -634,7 +612,7 @@ def display(df):
                 st.subheader("📈 Contract ROI Analysis")
                 
                 # Simplified ROI calculation (assuming contract setup costs)
-                contract_setup_cost = st.number_input("Estimated Contract Setup Cost (SAR)", min_value=0, value=10000)
+                contract_setup_cost = st.number_input("Estimated Contract Setup Cost", min_value=0, value=5000)
                 
                 roi_data = []
                 for _, row in savings_df.iterrows():
@@ -654,8 +632,8 @@ def display(df):
                 
                 st.dataframe(
                     roi_df.style.format({
-                        'Annual Savings': 'SAR {:,.0f}',
-                        'Setup Cost': 'SAR {:,.0f}',
+                        'Annual Savings': '{:,.0f}',
+                        'Setup Cost': '{:,.0f}',
                         'Payback (Months)': '{:.1f}',
                         '3-Year ROI (%)': '{:.0f}%'
                     }),
@@ -681,11 +659,11 @@ def display(df):
             
             with col1:
                 st.metric("High Priority Contracts", len(high_priority))
-                st.metric("Total High Priority Spend", f"SAR {high_priority['Annual Spend'].sum():,.0f}")
+                st.metric("Total High Priority Spend", f"{high_priority['Annual Spend'].sum():,.0f}")
             
             with col2:
                 st.metric("Medium Priority Contracts", len(medium_priority))
-                st.metric("Total Medium Priority Spend", f"SAR {medium_priority['Annual Spend'].sum():,.0f}")
+                st.metric("Total Medium Priority Spend", f"{medium_priority['Annual Spend'].sum():,.0f}")
             
             # Contract implementation roadmap
             st.subheader("🗺️ Implementation Roadmap")
@@ -709,7 +687,7 @@ def display(df):
                 'Annual Spend': 'sum',
                 'Vendor Name': 'count'
             }).round(0)
-            phase_summary.columns = ['Total Spend (SAR)', 'Number of Contracts']
+            phase_summary.columns = ['Total Spend', 'Number of Contracts']
             
             st.dataframe(phase_summary, use_container_width=True)
             
@@ -723,7 +701,7 @@ def display(df):
             
             st.dataframe(
                 roadmap_display.style.format({
-                    'Annual Spend': 'SAR {:,.0f}',
+                    'Annual Spend': '{:,.0f}',
                     'Suitability Score': '{:.2f}'
                 }),
                 use_container_width=True
@@ -815,13 +793,13 @@ def display(df):
         with col1:
             st.markdown("#### 🎯 **Contract Selection Criteria**")
             st.write("**High Priority Items:**")
-            st.write("• Annual spend > SAR 50,000")
+            st.write("• Annual spend > $50,000")
             st.write("• Regular, predictable demand")
             st.write("• Stable supplier relationship")
             st.write("• Limited supplier options")
             st.write("")
             st.write("**Medium Priority Items:**")
-            st.write("• Annual spend SAR 10,000 - 50,000")
+            st.write("• Annual spend $10,000 - $50,000")
             st.write("• Moderate demand variability")
             st.write("• Good supplier performance")
             st.write("• Some price volatility")
@@ -947,7 +925,7 @@ def display(df):
             strategy_guide = {
                 'section': ['Selection Criteria', 'Contract Types', 'Best Practices', 'KPIs', 'Lifecycle'],
                 'content': [
-                    'High Priority: >SAR 50K annual spend, predictable demand, stable supplier',
+                    'High Priority: >$50K annual spend, predictable demand, stable supplier',
                     'Fixed Price (6-18mo), Volume Commitment (12-36mo), BPO (12-24mo)',
                     'Due diligence, clear metrics, termination clauses, regular reviews',
                     'Cost savings, delivery rate, quality performance, supplier score',
