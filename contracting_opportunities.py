@@ -393,7 +393,18 @@ def display(df):
                         opportunities_df = pd.DataFrame(contract_opportunities)
                         opportunities_df = opportunities_df.sort_values(['Suitability Score', 'Annual Spend'], ascending=[False, False])
                         
-                        # Summary metrics
+                        # Add option to limit results for large datasets
+                        if len(opportunities_df) > 1000:
+                            show_limit = st.checkbox(f"Show top 500 results only (dataset has {len(opportunities_df):,} records)", value=True)
+                            if show_limit:
+                                display_opportunities_df = opportunities_df.head(500)
+                                st.info(f"Showing top 500 out of {len(opportunities_df):,} opportunities for performance.")
+                            else:
+                                display_opportunities_df = opportunities_df
+                        else:
+                            display_opportunities_df = opportunities_df
+                        
+                        # Summary metrics (use full dataset)
                         total_contract_spend = opportunities_df['Annual Spend'].sum()
                         high_priority_count = len(opportunities_df[opportunities_df['Contract Priority'] == 'High Priority'])
                         avg_suitability = opportunities_df['Suitability Score'].mean()
@@ -408,7 +419,7 @@ def display(df):
                         with col4:
                             st.metric("Avg Suitability Score", f"{avg_suitability:.2f}")
                         
-                        # Priority distribution
+                        # Priority distribution (use full dataset)
                         priority_counts = opportunities_df['Contract Priority'].value_counts()
                         
                         col1, col2 = st.columns(2)
@@ -428,8 +439,8 @@ def display(df):
                             st.plotly_chart(fig, use_container_width=True)
                         
                         with col2:
-                            # Top opportunities by spend
-                            top_by_spend = opportunities_df.nlargest(10, 'Annual Spend')
+                            # Top opportunities by spend (use limited dataset for display)
+                            top_by_spend = display_opportunities_df.nlargest(10, 'Annual Spend')
                             
                             fig = px.bar(
                                 top_by_spend,
@@ -450,24 +461,41 @@ def display(df):
                         # Detailed results table
                         st.subheader("📋 Contract Opportunities Details")
                         
-                        st.dataframe(
-                            opportunities_df.style.format({
-                                'Annual Spend': '{:,.0f}',
-                                'Monthly Frequency': '{:.1f}',
-                                'Demand Predictability': '{:.2f}',
-                                'Vendor Performance': '{:.2f}',
-                                'Suitability Score': '{:.2f}',
-                                'Avg Unit Price': '{:.2f}',
-                                'Price Stability': '{:.2f}'
-                            }),
-                            use_container_width=True
-                        )
+                        # Check dataframe size and apply styling only if reasonable
+                        total_cells = len(display_opportunities_df) * len(display_opportunities_df.columns)
                         
-                        # Opportunity matrix
+                        if total_cells > 100000:  # Limit styling for large datasets
+                            # Format specific columns for display without styling
+                            formatted_df = display_opportunities_df.copy()
+                            formatted_df['Annual Spend'] = formatted_df['Annual Spend'].apply(lambda x: f"{x:,.0f}")
+                            formatted_df['Monthly Frequency'] = formatted_df['Monthly Frequency'].apply(lambda x: f"{x:.1f}")
+                            formatted_df['Demand Predictability'] = formatted_df['Demand Predictability'].apply(lambda x: f"{x:.2f}")
+                            formatted_df['Vendor Performance'] = formatted_df['Vendor Performance'].apply(lambda x: f"{x:.2f}")
+                            formatted_df['Suitability Score'] = formatted_df['Suitability Score'].apply(lambda x: f"{x:.2f}")
+                            formatted_df['Avg Unit Price'] = formatted_df['Avg Unit Price'].apply(lambda x: f"{x:.2f}")
+                            formatted_df['Price Stability'] = formatted_df['Price Stability'].apply(lambda x: f"{x:.2f}")
+                            
+                            st.dataframe(formatted_df, use_container_width=True)
+                            st.info(f"Large dataset detected ({total_cells:,} cells). Styling disabled for performance.")
+                        else:
+                            st.dataframe(
+                                display_opportunities_df.style.format({
+                                    'Annual Spend': '{:,.0f}',
+                                    'Monthly Frequency': '{:.1f}',
+                                    'Demand Predictability': '{:.2f}',
+                                    'Vendor Performance': '{:.2f}',
+                                    'Suitability Score': '{:.2f}',
+                                    'Avg Unit Price': '{:.2f}',
+                                    'Price Stability': '{:.2f}'
+                                }),
+                                use_container_width=True
+                            )
+                        
+                        # Opportunity matrix (use limited dataset for display)
                         st.subheader("📊 Contract Opportunity Matrix")
                         
                         fig = px.scatter(
-                            opportunities_df,
+                            display_opportunities_df,
                             x='Suitability Score',
                             y='Vendor Performance',
                             size='Annual Spend',
@@ -488,13 +516,25 @@ def display(df):
                         st.plotly_chart(fig, use_container_width=True)
                         
                         # Export opportunities
-                        csv = opportunities_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Export Contract Opportunities",
-                            data=csv,
-                            file_name=f"contract_opportunities_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            csv_full = opportunities_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Export All Opportunities",
+                                data=csv_full,
+                                file_name=f"contract_opportunities_full_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                        
+                        with col2:
+                            if len(opportunities_df) != len(display_opportunities_df):
+                                csv_limited = display_opportunities_df.to_csv(index=False)
+                                st.download_button(
+                                    label=f"📥 Export Displayed ({len(display_opportunities_df)} records)",
+                                    data=csv_limited,
+                                    file_name=f"contract_opportunities_top500_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                                    mime="text/csv"
+                                )
                         
                         # Store results for other tabs
                         st.session_state['contract_opportunities'] = opportunities_df
@@ -567,19 +607,37 @@ def display(df):
                 # Performance comparison table
                 st.subheader("🏅 Vendor Performance Scorecard")
                 
-                st.dataframe(
-                    performance_df.style.format({
-                        'Overall Score': '{:.2f}',
-                        'Volume Consistency': '{:.2f}',
-                        'Price Stability': '{:.2f}',
-                        'Lead Time Consistency': '{:.2f}',
-                        'Delivery Performance': '{:.2f}',
-                        'Quality Score': '{:.2f}',
-                        'Total Spend': '{:,.0f}',
-                        'Avg Order Size': '{:.1f}'
-                    }),
-                    use_container_width=True
-                )
+                # Check dataframe size and apply styling only if reasonable
+                total_cells = len(performance_df) * len(performance_df.columns)
+                
+                if total_cells > 50000:  # Limit styling for large datasets
+                    # Format specific columns for display without styling
+                    display_df = performance_df.copy()
+                    display_df['Overall Score'] = display_df['Overall Score'].apply(lambda x: f"{x:.2f}")
+                    display_df['Volume Consistency'] = display_df['Volume Consistency'].apply(lambda x: f"{x:.2f}")
+                    display_df['Price Stability'] = display_df['Price Stability'].apply(lambda x: f"{x:.2f}")
+                    display_df['Lead Time Consistency'] = display_df['Lead Time Consistency'].apply(lambda x: f"{x:.2f}")
+                    display_df['Delivery Performance'] = display_df['Delivery Performance'].apply(lambda x: f"{x:.2f}")
+                    display_df['Quality Score'] = display_df['Quality Score'].apply(lambda x: f"{x:.2f}")
+                    display_df['Total Spend'] = display_df['Total Spend'].apply(lambda x: f"{x:,.0f}")
+                    display_df['Avg Order Size'] = display_df['Avg Order Size'].apply(lambda x: f"{x:.1f}")
+                    
+                    st.dataframe(display_df, use_container_width=True)
+                    st.info(f"Large dataset detected ({total_cells:,} cells). Styling disabled for performance.")
+                else:
+                    st.dataframe(
+                        performance_df.style.format({
+                            'Overall Score': '{:.2f}',
+                            'Volume Consistency': '{:.2f}',
+                            'Price Stability': '{:.2f}',
+                            'Lead Time Consistency': '{:.2f}',
+                            'Delivery Performance': '{:.2f}',
+                            'Quality Score': '{:.2f}',
+                            'Total Spend': '{:,.0f}',
+                            'Avg Order Size': '{:.1f}'
+                        }),
+                        use_container_width=True
+                    )
                 
             except Exception as e:
                 st.error(f"Error in vendor performance analysis: {str(e)}")
