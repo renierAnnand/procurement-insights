@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
-import requests
-from datetime import datetime, timedelta
 
 def get_currency_rates(base_currency='USD'):
-    """Get current currency exchange rates"""
-    # Default rates - in production, use real-time API
+    """Get currency exchange rates - using static rates for reliability"""
     default_rates = {
         'USD': 1.0,
         'EUR': 0.85,
@@ -22,14 +19,6 @@ def get_currency_rates(base_currency='USD'):
         'SAR': 3.75,  # Saudi Riyal
         'AED': 3.67   # UAE Dirham
     }
-    
-    # Try to get real-time rates (optional)
-    try:
-        # You can integrate with a real currency API here
-        # For now, using default rates
-        pass
-    except:
-        pass
     
     return default_rates
 
